@@ -124,7 +124,7 @@ static on_report_options_ptr on_report_options;
 static void sdcard_end_job (void);
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report);
 static void trap_state_change_request(uint_fast16_t state);
-static void sdcard_on_program_completed (program_flow_t program_flow);
+static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode);
 //static report_t active_reports;
 
 #ifdef __MSP432E401Y__
@@ -379,8 +379,10 @@ static int16_t sdcard_read (void)
                 c = '\n';
         }
 
-    } else if(state == STATE_IDLE) // TODO: end on ok count match line count?
-        sdcard_end_job();
+    } else if((state == STATE_IDLE || state == STATE_CHECK_MODE) && grbl.on_program_completed == sdcard_on_program_completed) { // TODO: end on ok count match line count?
+        sdcard_on_program_completed(ProgramFlow_CompletedM30, state == STATE_CHECK_MODE);
+        grbl.report.feedback_message(Message_ProgramEnd);
+    }
 
     return c;
 }
@@ -450,7 +452,7 @@ static void sdcard_restart_msg (sys_state_t state)
     report_feedback_message(Message_CycleStartToRerun);
 }
 
-static void sdcard_on_program_completed (program_flow_t program_flow)
+static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode)
 {
     frewind = frewind || program_flow == ProgramFlow_CompletedM2; // || program_flow == ProgramFlow_CompletedM30;
 
@@ -468,7 +470,7 @@ static void sdcard_on_program_completed (program_flow_t program_flow)
         sdcard_end_job();
 
     if(on_program_completed)
-        on_program_completed(program_flow);
+        on_program_completed(program_flow, check_mode);
 }
 
 #if M6_ENABLE
@@ -599,7 +601,7 @@ static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.00]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.01]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
