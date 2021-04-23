@@ -46,6 +46,8 @@
   #include "grbl/state_machine.h"
 #endif
 
+#include "sdcard/ymodem.h"
+
 #ifdef __IMXRT1062__
 const char *dev = "1:/";
 #elif defined(NEW_FATFS)
@@ -568,6 +570,20 @@ static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
     return retval;
 }
 
+static status_code_t sd_cmd_unlink (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+#if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
+    if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(args)
+        retval = f_unlink(args) ? Status_OK : Status_SDReadError;
+#endif
+
+    return retval;
+}
+
 static void sdcard_reset (void)
 {
     if(hal.stream.type == StreamType_SDCard) {
@@ -587,6 +603,9 @@ static void onReportCommandHelp (void)
     hal.stream.write("$F - list files on SD card" ASCII_EOL);
     hal.stream.write("$F=<filename> - run SD card file" ASCII_EOL);
     hal.stream.write("$FM - mount SD card" ASCII_EOL);
+#if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
+    hal.stream.write("$FD=<filename> - delete SD card file" ASCII_EOL);
+#endif
     hal.stream.write("$FR - enable rewind mode for next SD card file to run" ASCII_EOL);
     hal.stream.write("$F<=<filename> - dump SD card file to output" ASCII_EOL);
 
@@ -599,7 +618,11 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(newopt)
+#if SDCARD_ENABLE == 2 && FF_FS_READONLY == 0
+        hal.stream.write(hal.stream.write_char == NULL ? ",SD" : ",SD,YM");
+#else
         hal.stream.write(",SD");
+#endif
     else
         hal.stream.write("[PLUGIN:SDCARD v1.01]" ASCII_EOL);
 }
@@ -608,6 +631,7 @@ const sys_command_t sdcard_command_list[] = {
     {"F", false, sd_cmd_file},
     {"FM", true, sd_cmd_mount},
     {"FR", true, sd_cmd_rewind},
+    {"FD", false, sd_cmd_unlink},
     {"F<", false, sd_cmd_to_output},
 };
 
@@ -634,6 +658,11 @@ void sdcard_init (void)
 
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = onReportOptions;
+
+#if SDCARD_ENABLE == 2 && FF_FS_READONLY == 0
+    if(hal.stream.write_char != NULL)
+        ymodem_init();
+#endif
 }
 
 FATFS *sdcard_getfs (void)
