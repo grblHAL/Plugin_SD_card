@@ -433,7 +433,9 @@ static status_code_t trap_status_report (status_code_t status_code)
 
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
-    if(hal.stream.read != await_cycle_start) {
+    if(hal.stream.read == await_cycle_start)
+        stream_write("|SD:Pending");
+    else {
         char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
 
         if(state_get() != STATE_IDLE && !strncmp(pct_done, "100.0", 5))
@@ -589,9 +591,10 @@ static void sdcard_reset (void)
     if(hal.stream.type == StreamType_SDCard) {
         if(file.line > 0) {
             char buf[70];
-            sprintf(buf, "[MSG:Reset during streaming of SD file at line: " UINT32FMT "]" ASCII_EOL, file.line);
-            hal.stream.write(buf);
-        }
+            sprintf(buf, "Reset during streaming of SD file at line: " UINT32FMT, file.line);
+            report_message(buf, Message_Plain);
+        } else if(frewind)
+            report_feedback_message(Message_None);
         sdcard_end_job();
     }
 
@@ -624,7 +627,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.02]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {

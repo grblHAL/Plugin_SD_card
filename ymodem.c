@@ -67,6 +67,7 @@ typedef struct {
 
 static ymodem_t ymodem;
 
+static driver_reset_ptr driver_reset;
 static on_execute_realtime_ptr on_execute_realtime;
 static on_unknown_realtime_cmd_ptr on_unknown_realtime_cmd;
 static io_stream_t active_stream;
@@ -250,19 +251,13 @@ static ymodem_status_t await_crc (uint8_t c)
     return status;
 }
 
+// End of transmission handler.
 static ymodem_status_t await_eot (uint8_t c)
 {
-    ymodem_status_t status = YModem_NOOP;
-
-    if(ymodem.idx < sizeof(ymodem.payload))
-        ymodem.payload[ymodem.idx++] = c;
-
     if(c == ASCII_EOT)
         end_transfer(true);
-    else
-        ymodem.crc = c;     // Set active handler to wait for next packet
 
-    return status;
+    return YModem_NOOP;
 }
 
 // Main YModem protocol loop.
@@ -335,10 +330,22 @@ static void protocol_loop (sys_state_t state)
     on_execute_realtime(state);
 }
 
-// Buffer all received characters
+// Buffer all received characters.
 static bool buffer_all (char c)
 {
     return false;
+}
+
+// Terminate any ongoing transfer on a soft reset.
+static void on_soft_reset (void)
+{
+    if(grbl.on_execute_realtime == protocol_loop) {
+        hal.stream.write_char(ASCII_CAN);
+        hal.stream.write_char(ASCII_CAN);
+        end_transfer(false);
+    }
+
+    driver_reset();
 }
 
 // Check input stream for file YModem start of header (soh) characters.
@@ -368,6 +375,9 @@ static bool trap_initial_soh (char c)
 // Add YModem protocol to chain of unknown real-time command handlers
 void ymodem_init (void)
 {
+    driver_reset = hal.driver_reset;
+    hal.driver_reset = on_soft_reset;
+
     on_unknown_realtime_cmd = grbl.on_unknown_realtime_cmd;
     grbl.on_unknown_realtime_cmd = trap_initial_soh;
 }
