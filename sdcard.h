@@ -58,6 +58,7 @@
 #endif
 
 void sdcard_init (void);
+bool sdcard_busy (void);
 FATFS *sdcard_getfs(void);
 
 #endif // SDCARD_ENABLE

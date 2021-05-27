@@ -27,7 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(ESP_PLATFORM) || defined(STM32_PLATFORM) ||  defined(__LPC17XX__) ||  defined(__IMXRT1062__)
+#if defined(ESP_PLATFORM) || defined(STM32_PLATFORM) ||  defined(__LPC17XX__) ||  defined(__IMXRT1062__) || defined(__MSP432E401Y__)
 #define NEW_FATFS
 #endif
 
@@ -49,7 +49,7 @@
 #include "sdcard/ymodem.h"
 
 #ifdef __IMXRT1062__
-const char *dev = "1:/";
+const char *dev = SDCARD_DEV;
 #elif defined(NEW_FATFS)
 const char *dev = "";
 #endif
@@ -212,7 +212,7 @@ static FRESULT scan_dir (char *path, uint_fast8_t depth, char *buf)
     fno.lfsize = sizeof(lfn);
 #endif
 
-    if((res = f_opendir(&dir, path)) != FR_OK)
+    if((res = f_opendir(&dir, *path == '\0' ? "/" : path)) != FR_OK)
         return res;
 
     // Pass 1: Scan files
@@ -304,7 +304,12 @@ static int16_t file_read (void)
 static bool sdcard_mount (void)
 {
 #ifdef __MSP432E401Y__
-    return SDFatFS_open(Board_SDFatFS0, 0) != NULL;
+    SDFatFS_Handle fs = SDFatFS_open(Board_SDFatFS0, 0);
+
+    if(fs)
+        file.fs = &fs->object->filesystem;
+
+    return file.fs != NULL;
 #else
     if(file.fs == NULL)
   #ifdef __IMXRT1062__
@@ -666,6 +671,11 @@ void sdcard_init (void)
     if(hal.stream.write_char != NULL)
         ymodem_init();
 #endif
+}
+
+bool sdcard_busy (void)
+{
+    return hal.stream.type == StreamType_SDCard;
 }
 
 FATFS *sdcard_getfs (void)
