@@ -25,16 +25,14 @@
 #if defined(ARDUINO)
 #include "../driver.h"
 #include "../grbl/hal.h"
+#include "../grbl/platform.h"
 #else
 #include "driver.h"
 #include "grbl/hal.h"
+#include "grbl/platform.h"
 #endif
 
 #if SDCARD_ENABLE
-
-#if defined(STM32F103xB) || defined(STM32F401xC) ||  defined(STM32F407xx) || defined(STM32F411xE) || defined(STM32F446xx)
-#define STM32_PLATFORM
-#endif
 
 #ifdef __MSP432E401Y__
 #include "fatfs/ff.h"

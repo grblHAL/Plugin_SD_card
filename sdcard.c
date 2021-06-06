@@ -58,14 +58,6 @@ const char *dev = "";
 #define SDCARD_DEV ""
 #endif
 
-#if defined(STM32_PLATFORM) || defined(__LPC17XX__) ||  defined(__IMXRT1062__)
-#define UINT32FMT "%lu"
-#endif
-
-#ifndef UINT32FMT
-#define UINT32FMT "%u"
-#endif
-
 // https://e2e.ti.com/support/tools/ccs/f/81/t/428524?Linking-error-unresolved-symbols-rom-h-pinout-c-
 
 /* uses fatfs - http://www.elm-chan.org/fsw/ff/00index_e.html */
