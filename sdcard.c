@@ -349,8 +349,9 @@ static void sdcard_end_job (void)
     if(grbl.on_state_change == trap_state_change_request)
         grbl.on_state_change = state_change_requested;
 
-    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));   // Restore stream pointers
-    hal.stream.reset_read_buffer();                             // and flush input buffer
+    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));               // Restore stream pointers,
+    hal.stream.set_enqueue_rt_handler(protocol_enqueue_realtime_command);   // restore real time command handling
+    hal.stream.reset_read_buffer();                                         // and flush input buffer
     on_realtime_report = NULL;
     state_change_requested = NULL;
 
@@ -394,7 +395,7 @@ static int16_t await_cycle_start (void)
 // Drop input from current stream except realtime commands
 static ISR_CODE bool drop_input_stream (char c)
 {
-    active_stream.enqueue_realtime_command(c);
+    protocol_enqueue_realtime_command(c);
 
     return true;
 }
@@ -507,19 +508,19 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
                 memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
                 hal.stream.type = StreamType_SDCard;                        // then redirect to read from SD card instead
                 hal.stream.read = sdcard_read;                              // ...
-                hal.stream.enqueue_realtime_command = drop_input_stream;    // Drop input from current stream except realtime commands
 #if M6_ENABLE
                 hal.stream.suspend_read = sdcard_suspend;                   // ...
 #else
                 hal.stream.suspend_read = NULL;                             // ...
 #endif
+                hal.stream.set_enqueue_rt_handler(drop_input_stream);       // Drop input from current stream except realtime commands
                 on_realtime_report = grbl.on_realtime_report;
-                grbl.on_realtime_report = sdcard_report;                     // Add percent complete to real time report
+                grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
 
                 on_program_completed = grbl.on_program_completed;
                 grbl.on_program_completed = sdcard_on_program_completed;
 
-                grbl.report.status_message = trap_status_report;             // Redirect status message reports here
+                grbl.report.status_message = trap_status_report;            // Redirect status message reports here
                 retval = Status_OK;
             } else
                 retval = Status_SDReadError;
