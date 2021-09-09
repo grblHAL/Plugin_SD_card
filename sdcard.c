@@ -121,6 +121,24 @@ static void trap_state_change_request(uint_fast16_t state);
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode);
 //static report_t active_reports;
 
+PROGMEM static const status_detail_t status_detail[] = {
+    { Status_SDMountError, "SD Card", "SD Card mount failed." },
+    { Status_SDReadError, "SD Card", "SD Card file open/read failed." },
+    { Status_SDFailedOpenDir, "SD Card", "SD Card directory listing failed." },
+    { Status_SDDirNotFound, "SD Card", "SD Card directory not found." },
+    { Status_SDFileEmpty, "SD Card", "SD Card file empty." }
+};
+
+static error_details_t error_details = {
+    .errors = status_detail,
+    .n_errors = sizeof(status_detail) / sizeof(status_detail_t)
+};
+
+static error_details_t *on_get_errors (void)
+{
+    return &error_details;
+}
+
 #ifdef __MSP432E401Y__
 /*---------------------------------------------------------*/
 /* User Provided Timer Function for FatFs module           */
@@ -659,6 +677,9 @@ void sdcard_init (void)
 
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = onReportOptions;
+
+    error_details.on_get_errors = grbl.on_get_errors;
+    grbl.on_get_errors = on_get_errors;
 
 #if SDCARD_ENABLE == 2 && FF_FS_READONLY == 0
     if(hal.stream.write_char != NULL)
