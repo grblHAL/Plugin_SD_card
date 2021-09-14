@@ -1,5 +1,5 @@
 /*
-  sdcard.c - SDCard plugin for FatFs
+  sdcard.c - streaming plugin for SDCard/FatFs
 
   Part of grblHAL
 
@@ -113,6 +113,7 @@ static on_report_command_help_ptr on_report_command_help;
 static on_realtime_report_ptr on_realtime_report;
 static on_state_change_ptr state_change_requested;
 static on_program_completed_ptr on_program_completed;
+static enqueue_realtime_command_ptr enqueue_realtime_command;
 static on_report_options_ptr on_report_options;
 
 static void sdcard_end_job (void);
@@ -367,15 +368,18 @@ static void sdcard_end_job (void)
     if(grbl.on_state_change == trap_state_change_request)
         grbl.on_state_change = state_change_requested;
 
-    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));               // Restore stream pointers,
-    hal.stream.set_enqueue_rt_handler(protocol_enqueue_realtime_command);   // restore real time command handling
-    hal.stream.reset_read_buffer();                                         // and flush input buffer
+    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));      // Restore stream pointers,
+    hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);   // restore real time command handling
+    hal.stream.reset_read_buffer();                                // and flush input buffer
     on_realtime_report = NULL;
     state_change_requested = NULL;
 
     report_init_fns();
 
     frewind = false;
+
+    if(grbl.on_stream_changed)
+        grbl.on_stream_changed(hal.stream.type);
 }
 
 static int16_t sdcard_read (void)
@@ -413,7 +417,7 @@ static int16_t await_cycle_start (void)
 // Drop input from current stream except realtime commands
 static ISR_CODE bool drop_input_stream (char c)
 {
-    protocol_enqueue_realtime_command(c);
+    enqueue_realtime_command(c);
 
     return true;
 }
@@ -531,7 +535,6 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
 #else
                 hal.stream.suspend_read = NULL;                             // ...
 #endif
-                hal.stream.set_enqueue_rt_handler(drop_input_stream);       // Drop input from current stream except realtime commands
                 on_realtime_report = grbl.on_realtime_report;
                 grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
 
@@ -539,6 +542,12 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
                 grbl.on_program_completed = sdcard_on_program_completed;
 
                 grbl.report.status_message = trap_status_report;            // Redirect status message reports here
+
+                enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
+
+                if(grbl.on_stream_changed)
+                    grbl.on_stream_changed(hal.stream.type);
+
                 retval = Status_OK;
             } else
                 retval = Status_SDReadError;
