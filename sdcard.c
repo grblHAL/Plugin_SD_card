@@ -478,8 +478,11 @@ static void sdcard_restart_msg (sys_state_t state)
 
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode)
 {
+#if WEBUI_ENABLE // TODO: somehow add run time check?
+    frewind = false; // Not (yet?) supported.
+#else
     frewind = frewind || program_flow == ProgramFlow_CompletedM2; // || program_flow == ProgramFlow_CompletedM30;
-
+#endif
     if(frewind) {
         f_lseek(file.handle, 0);
         file.pos = file.line = 0;
@@ -504,11 +507,11 @@ static bool sdcard_suspend (bool suspend)
     if(suspend) {
         hal.stream.reset_read_buffer();
         hal.stream.read = active_stream.read;               // Restore normal stream input for tool change (jog etc)
-        hal.stream.enqueue_realtime_command = active_stream.enqueue_realtime_command;
+        hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);
         grbl.report.status_message = report_status_message;  // as well as normal status messages reporting
     } else {
         hal.stream.read = sdcard_read;                      // Resume reading from SD card
-        hal.stream.enqueue_realtime_command = drop_input_stream;
+        enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);
         grbl.report.status_message = trap_status_report;     // and redirect status messages back to us
     }
 
