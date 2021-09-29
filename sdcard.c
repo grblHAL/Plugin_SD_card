@@ -63,7 +63,6 @@ const char *dev = "";
 /* uses fatfs - http://www.elm-chan.org/fsw/ff/00index_e.html */
 
 #define MAX_PATHLEN 128
-#define LCAPS(c) ((c >= 'A' && c <= 'Z') ? c | 0x20 : c)
 
 #if FF_USE_LFN
 //#define _USE_LFN FF_USE_LFN
