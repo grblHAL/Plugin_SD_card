@@ -391,7 +391,7 @@ static int16_t sdcard_read (void)
 
     if(file.handle) {
 
-        if(state == STATE_IDLE || (state & (STATE_CYCLE|STATE_HOLD|STATE_CHECK_MODE)))
+        if(state == STATE_IDLE || (state & (STATE_CYCLE|STATE_HOLD|STATE_CHECK_MODE|STATE_TOOL_CHANGE)))
             c = file_read();
 
         if(c == -1) { // EOF or error reading or grbl problem
@@ -452,9 +452,8 @@ static status_code_t trap_status_report (status_code_t status_code)
 
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
-    if(hal.stream.read == await_cycle_start)
-        stream_write("|SD:Pending");
-    else {
+    if(hal.stream.read == sdcard_read) {
+
         char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
 
         if(state_get() != STATE_IDLE && !strncmp(pct_done, "100.0", 5))
@@ -464,7 +463,8 @@ static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_
         stream_write(pct_done);
         stream_write(",");
         stream_write(file.name);
-    }
+    } else if(hal.stream.read == await_cycle_start)
+        stream_write("|SD:Pending");
 
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
@@ -499,24 +499,32 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
         on_program_completed(program_flow, check_mode);
 }
 
-#if M6_ENABLE
+ISR_CODE static bool await_toolchange_ack (char c)
+{
+    if(c == CMD_TOOL_ACK) {
+        hal.stream.read = active_stream.read;                           // Restore normal stream input for tool change (jog etc)
+        active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // ...
+    } else
+        return enqueue_realtime_command(c);
+
+    return true;
+}
 
 static bool sdcard_suspend (bool suspend)
 {
     if(suspend) {
-        hal.stream.reset_read_buffer();
-        hal.stream.read = active_stream.read;               // Restore normal stream input for tool change (jog etc)
-        hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);
-        grbl.report.status_message = report_status_message;  // as well as normal status messages reporting
+        hal.stream.read = stream_get_null;                              // Set read function to return empty,
+        active_stream.reset_read_buffer();                              // flush input buffer,
+        active_stream.set_enqueue_rt_handler(await_toolchange_ack);     // set handler to wait for tool change acknowledge
+        grbl.report.status_message = report_status_message;             // and restore normal status messages reporting,
     } else {
-        hal.stream.read = sdcard_read;                      // Resume reading from SD card
-        enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);
-        grbl.report.status_message = trap_status_report;     // and redirect status messages back to us
+        hal.stream.read = sdcard_read;                                  // Resume reading from SD card
+        hal.stream.set_enqueue_rt_handler(drop_input_stream);           // ..
+        grbl.report.status_message = trap_status_report;                // and redirect status messages back to us.
     }
 
     return true;
 }
-#endif
 
 static status_code_t sd_cmd_file (sys_state_t state, char *args)
 {
@@ -532,11 +540,10 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
                 memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
                 hal.stream.type = StreamType_SDCard;                        // then redirect to read from SD card instead
                 hal.stream.read = sdcard_read;                              // ...
-#if M6_ENABLE
-                hal.stream.suspend_read = sdcard_suspend;                   // ...
-#else
-                hal.stream.suspend_read = NULL;                             // ...
-#endif
+                if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
+                    hal.stream.suspend_read = sdcard_suspend;               // then we do as well
+                else                                                        //
+                    hal.stream.suspend_read = NULL;                         // else not
                 on_realtime_report = grbl.on_realtime_report;
                 grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
 
@@ -654,7 +661,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.02]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.03]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
