@@ -122,11 +122,11 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
 //static report_t active_reports;
 
 PROGMEM static const status_detail_t status_detail[] = {
-    { Status_SDMountError, "SD Card", "SD Card mount failed." },
-    { Status_SDReadError, "SD Card", "SD Card file open/read failed." },
-    { Status_SDFailedOpenDir, "SD Card", "SD Card directory listing failed." },
-    { Status_SDDirNotFound, "SD Card", "SD Card directory not found." },
-    { Status_SDFileEmpty, "SD Card", "SD Card file empty." }
+    { Status_SDMountError, "SD Card mount failed." },
+    { Status_SDReadError, "SD Card file open/read failed." },
+    { Status_SDFailedOpenDir, "SD Card directory listing failed." },
+    { Status_SDDirNotFound, "SD Card directory not found." },
+    { Status_SDFileEmpty, "SD Card file empty." }
 };
 
 static error_details_t error_details = {
