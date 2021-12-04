@@ -105,7 +105,7 @@ static file_t file = {
     .pos = 0
 };
 
-static bool frewind = false;
+static bool frewind = false, webui = false;
 static io_stream_t active_stream;
 static driver_reset_ptr driver_reset;
 static on_report_command_help_ptr on_report_command_help;
@@ -114,8 +114,9 @@ static on_state_change_ptr state_change_requested;
 static on_program_completed_ptr on_program_completed;
 static enqueue_realtime_command_ptr enqueue_realtime_command;
 static on_report_options_ptr on_report_options;
+static on_stream_changed_ptr on_stream_changed;
 
-static void sdcard_end_job (void);
+static void sdcard_end_job (bool flush);
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report);
 static void trap_state_change_request(uint_fast16_t state);
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode);
@@ -349,7 +350,7 @@ static status_code_t sdcard_ls (void)
     return scan_dir(path, 10, name) == FR_OK ? Status_OK : Status_SDFailedOpenDir;
 }
 
-static void sdcard_end_job (void)
+static void sdcard_end_job (bool flush)
 {
     file_close();
 
@@ -362,15 +363,20 @@ static void sdcard_end_job (void)
     if(grbl.on_state_change == trap_state_change_request)
         grbl.on_state_change = state_change_requested;
 
-    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));      // Restore stream pointers,
-    hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);   // restore real time command handling
-    hal.stream.reset_read_buffer();                                // and flush input buffer
+    grbl.on_stream_changed = on_stream_changed;
+
+    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));       // Restore stream pointers and
+    hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // restore real time command handling.
+
+    if(flush)                                                       // Flush input buffer?
+        hal.stream.reset_read_buffer();                             // Yes, do it.
+
     on_realtime_report = NULL;
     state_change_requested = NULL;
 
     report_init_fns();
 
-    frewind = false;
+    webui = frewind = false;
 
     if(grbl.on_stream_changed)
         grbl.on_stream_changed(hal.stream.type);
@@ -378,7 +384,7 @@ static void sdcard_end_job (void)
 
 static int16_t sdcard_read (void)
 {
-    int16_t c = -1;
+    int16_t c = SERIAL_NO_DATA;
     sys_state_t state = state_get();
 
     if(file.eol == 1)
@@ -439,7 +445,7 @@ static status_code_t trap_status_report (status_code_t status_code)
         char buf[50]; // TODO: check if extended error reports are permissible
         sprintf(buf, "error:%d in SD file at line " UINT32FMT ASCII_EOL, (uint8_t)status_code, file.line);
         hal.stream.write(buf);
-        sdcard_end_job();
+        sdcard_end_job(true);
     }
 
     return status_code;
@@ -488,7 +494,7 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
         }
         protocol_enqueue_rt_command(sdcard_restart_msg);
     } else
-        sdcard_end_job();
+        sdcard_end_job(true);
 
     if(on_program_completed)
         on_program_completed(program_flow, check_mode);
@@ -521,6 +527,67 @@ static bool sdcard_suspend (bool suspend)
     return true;
 }
 
+static void terminate_job (sys_state_t state)
+{
+    if(state == STATE_CYCLE) {
+        // Halt motion so that executing stop does not result in loss of position
+        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+        do {
+            if(!protocol_execute_realtime()) // Check for system abort
+                break;
+        } while (state_get() != STATE_IDLE);
+    }
+
+    sys.flags.keep_input = On;
+    system_set_exec_state_flag(EXEC_STOP);
+
+    sdcard_end_job(false);
+
+    report_message("SD card job terminated due to connection change", Message_Info);
+}
+
+static bool check_input_stream (char c)
+{
+    bool ok;
+
+    if(!(ok = enqueue_realtime_command(c))) {
+        if(hal.stream.read != stream_get_null) {
+            hal.stream.read = stream_get_null;
+            protocol_enqueue_rt_command(terminate_job);
+        }
+    }
+
+    return ok;
+}
+
+static void stream_changed (stream_type_t type)
+{
+    if(type != StreamType_SDCard && file.handle != NULL) {
+
+        // Reconnect from WebUI?
+        if(webui && (type != StreamType_WebSocket || hal.stream.state.webui_connected)) {
+            active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // Restore previous real time handler,
+            memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));       // save current stream pointers
+            hal.stream.type = StreamType_SDCard;                            // then redirect to read from SD card instead
+            hal.stream.read = sdcard_read;                                  // ...
+
+            if(hal.stream.suspend_read)                                     // If active stream support tool change suspend
+                hal.stream.suspend_read = sdcard_suspend;                   // then we do as well
+            else                                                            //
+                hal.stream.suspend_read = NULL;                             // else not
+
+            if(type == StreamType_WebSocket)                                                        // If WebUI came back online
+                enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // restore normal operation
+            else                                                                                    // else
+                enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(check_input_stream);   // check for stream takeover
+        } else // Terminate job.
+            protocol_enqueue_rt_command(terminate_job);
+    }
+
+    if(on_stream_changed)
+        on_stream_changed(type);
+}
+
 static status_code_t sd_cmd_file (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
@@ -531,7 +598,8 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
         else {
             if(file_open(args)) {
                 gc_state.last_error = Status_OK;                            // Start with no errors
-                grbl.report.status_message(Status_OK);                      // and confirm command to originator
+                grbl.report.status_message(Status_OK);                      // and confirm command to originator.
+                webui = hal.stream.state.webui_connected;                  // Did WebUI start this job?
                 memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
                 hal.stream.type = StreamType_SDCard;                        // then redirect to read from SD card instead
                 hal.stream.read = sdcard_read;                              // ...
@@ -551,6 +619,11 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
 
                 if(grbl.on_stream_changed)
                     grbl.on_stream_changed(hal.stream.type);
+
+                if(grbl.on_stream_changed != stream_changed) {
+                    on_stream_changed = grbl.on_stream_changed;
+                    grbl.on_stream_changed = stream_changed;
+                }
 
                 retval = Status_OK;
             } else
@@ -624,7 +697,7 @@ static void sdcard_reset (void)
             report_message(buf, Message_Plain);
         } else if(frewind)
             report_feedback_message(Message_None);
-        sdcard_end_job();
+        sdcard_end_job(true);
     }
 
     driver_reset();
@@ -656,7 +729,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.03]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.04]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
