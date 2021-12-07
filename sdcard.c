@@ -35,11 +35,6 @@
   #include "../grbl/report.h"
   #include "../grbl/protocol.h"
   #include "../grbl/state_machine.h"
-  #ifdef __IMXRT1062__
-    #include "uSDFS.h"
-    #define SDCARD_DEV "1:/"
-    static FATFS fs;
-  #endif
 #else
   #include "grbl/report.h"
   #include "grbl/protocol.h"
@@ -48,14 +43,8 @@
 
 #include "sdcard/ymodem.h"
 
-#ifdef __IMXRT1062__
-const char *dev = SDCARD_DEV;
-#elif defined(NEW_FATFS)
-const char *dev = "";
-#endif
-
-#ifndef SDCARD_DEV
-#define SDCARD_DEV ""
+#if defined(NEW_FATFS)
+static char *dev = "";
 #endif
 
 // https://e2e.ti.com/support/tools/ccs/f/81/t/428524?Linking-error-unresolved-symbols-rom-h-pinout-c-
@@ -107,6 +96,7 @@ static file_t file = {
 
 static bool frewind = false, webui = false;
 static io_stream_t active_stream;
+static sdcard_events_t sdcard;
 static driver_reset_ptr driver_reset;
 static on_report_command_help_ptr on_report_command_help;
 static on_realtime_report_ptr on_realtime_report;
@@ -309,38 +299,44 @@ static int16_t file_read (void)
 
 static bool sdcard_mount (void)
 {
-#ifdef __MSP432E401Y__
-    SDFatFS_Handle fs = SDFatFS_open(Board_SDFatFS0, 0);
+    if(sdcard.on_mount) {
+        sdcard.on_mount(&file.fs);
+        return file.fs != NULL;
+    }
 
-    if(fs)
-        file.fs = &fs->object->filesystem;
-
-    return file.fs != NULL;
-#else
     if(file.fs == NULL)
-  #ifdef __IMXRT1062__
-        file.fs = &fs;
-  #else
         file.fs = malloc(sizeof(FATFS));
-  #endif
 
   #ifdef NEW_FATFS
     if(file.fs && f_mount(file.fs, dev, 1) != FR_OK) {
   #else
     if(file.fs && f_mount(0, file.fs) != FR_OK) {
   #endif
-  #ifndef __IMXRT1062__
         free(file.fs);
-  #endif
         file.fs = NULL;
     }
-  #if defined(__IMXRT1062__)
-    else if(f_chdrive(dev) != FR_OK)
-        file.fs = NULL;
-  #endif
 
     return file.fs != NULL;
+}
+
+static bool sdcard_unmount (void)
+{
+    bool ok = true;
+
+    if(file.fs) {
+        if(sdcard.on_unmount)
+            ok = sdcard.on_unmount(&file.fs);
+#ifdef NEW_FATFS
+        else
+            f_mount(file.fs, dev, 0);
 #endif
+        if(ok && file.fs) {
+            free(file.fs);
+            file.fs = NULL;
+        }
+    }
+
+    return file.fs == NULL;
 }
 
 static status_code_t sdcard_ls (void)
@@ -644,6 +640,13 @@ static status_code_t sd_cmd_mount (sys_state_t state, char *args)
     return sdcard_mount() ? Status_OK : Status_SDMountError;
 }
 
+static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
+{
+    frewind = false;
+
+    return sdcard_unmount() ? Status_OK : Status_SDMountError;
+}
+
 static status_code_t sd_cmd_rewind (sys_state_t state, char *args)
 {
     frewind = true;
@@ -729,12 +732,13 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.04]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.05]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
     {"F", false, sd_cmd_file},
     {"FM", true, sd_cmd_mount},
+    {"FU", true, sd_cmd_unmount},
     {"FR", true, sd_cmd_rewind},
     {"FD", false, sd_cmd_unlink},
     {"F<", false, sd_cmd_to_output},
@@ -750,7 +754,7 @@ sys_commands_t *sdcard_get_commands()
     return &sdcard_commands;
 }
 
-void sdcard_init (void)
+sdcard_events_t *sdcard_init (void)
 {
     driver_reset = hal.driver_reset;
     hal.driver_reset = sdcard_reset;
@@ -770,6 +774,7 @@ void sdcard_init (void)
     if(hal.stream.write_char != NULL)
         ymodem_init();
 #endif
+    return &sdcard;
 }
 
 bool sdcard_busy (void)
