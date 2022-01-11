@@ -411,7 +411,7 @@ static int16_t await_cycle_start (void)
 }
 
 // Drop input from current stream except realtime commands
-static ISR_CODE bool drop_input_stream (char c)
+static ISR_CODE ISR_FUNC(bool drop_input_stream)(char c)
 {
     enqueue_realtime_command(c);
 
@@ -496,7 +496,7 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
         on_program_completed(program_flow, check_mode);
 }
 
-ISR_CODE static bool await_toolchange_ack (char c)
+ISR_CODE static bool ISR_FUNC(await_toolchange_ack)(char c)
 {
     if(c == CMD_TOOL_ACK) {
         hal.stream.read = active_stream.read;                           // Restore normal stream input for tool change (jog etc)
