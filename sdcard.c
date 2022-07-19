@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2021 Terje Io
+  Copyright (c) 2018-2022 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -732,7 +732,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.05]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.06]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
@@ -780,6 +780,20 @@ sdcard_events_t *sdcard_init (void)
 bool sdcard_busy (void)
 {
     return hal.stream.type == StreamType_SDCard;
+}
+
+sdcard_job_t *sdcard_get_job_info (void)
+{
+    static sdcard_job_t job;
+
+    if(sdcard_busy()) {
+        strcpy(job.name, file.name);
+        job.size = file.size;
+        job.pos = file.pos;
+        job.line = file.line;
+    }
+
+    return sdcard_busy() ? &job : NULL;
 }
 
 FATFS *sdcard_getfs (void)

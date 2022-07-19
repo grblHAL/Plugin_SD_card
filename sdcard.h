@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2021 Terje Io
+  Copyright (c) 2018-2022 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -58,9 +58,18 @@ typedef struct {
     on_unmount_ptr on_unmount;
 } sdcard_events_t;
 
+typedef struct
+{
+    char name[50];
+    size_t size;
+    size_t pos;
+    uint32_t line;
+} sdcard_job_t;
+
 sdcard_events_t *sdcard_init (void);
 bool sdcard_busy (void);
-FATFS *sdcard_getfs(void);
+FATFS *sdcard_getfs (void);
+sdcard_job_t *sdcard_get_job_info (void);
 
 #endif // SDCARD_ENABLE
 
