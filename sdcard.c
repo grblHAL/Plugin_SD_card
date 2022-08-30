@@ -35,13 +35,16 @@
   #include "../grbl/report.h"
   #include "../grbl/protocol.h"
   #include "../grbl/state_machine.h"
+  #include "../grbl/vfs.h"
 #else
   #include "grbl/report.h"
   #include "grbl/protocol.h"
   #include "grbl/state_machine.h"
+  #include "grbl/vfs.h"
 #endif
 
-#include "sdcard/ymodem.h"
+#include "ymodem.h"
+#include "fs_fatfs.h"
 
 #if defined(NEW_FATFS)
 static char *dev = "";
@@ -53,11 +56,6 @@ static char *dev = "";
 
 #define MAX_PATHLEN 128
 
-#if FF_USE_LFN
-//#define _USE_LFN FF_USE_LFN
-#define _MAX_LFN FF_MAX_LFN
-#endif
-
 char const *const filetypes[] = {
     "nc",
     "gcode",
@@ -68,7 +66,7 @@ char const *const filetypes[] = {
     ""
 };
 
-static FIL cncfile;
+static vfs_file_t *cncfile;
 
 typedef enum {
     Filename_Filtered = 0,
@@ -79,7 +77,7 @@ typedef enum {
 typedef struct
 {
     FATFS *fs;
-    FIL *handle;
+    vfs_file_t *handle;
     char name[50];
     size_t size;
     size_t pos;
@@ -182,72 +180,56 @@ static file_status_t allowed (char *filename, bool is_file)
     return status;
 }
 
-static inline char *get_name (FILINFO *file)
+static int scan_dir (char *path, uint_fast8_t depth, char *buf)
 {
-#if _USE_LFN
-    return *file->lfname == '\0' ? file->fname : file->lfname;
-#else
-    return file->fname;
-#endif
-}
-
-static FRESULT scan_dir (char *path, uint_fast8_t depth, char *buf)
-{
-#if defined(ESP_PLATFORM)
-    FF_DIR dir;
-#else
-    DIR dir;
-#endif
-    FILINFO fno;
-    FRESULT res;
-    file_status_t status;
+    int res = 0;
     bool subdirs = false;
-#if _USE_LFN
-    static TCHAR lfn[_MAX_LFN + 1];   /* Buffer to store the LFN */
-    fno.lfname = lfn;
-    fno.lfsize = sizeof(lfn);
-#endif
+    vfs_dir_t *dir;
+    vfs_dirent_t *dirent;
+    file_status_t status;
 
-    if((res = f_opendir(&dir, *path == '\0' ? "/" : path)) != FR_OK)
-        return res;
+    if((dir = vfs_opendir(*path == '\0' ? "/" : path)) == NULL)
+        return vfs_errno;
 
     // Pass 1: Scan files
     while(true) {
 
-        if((res = f_readdir(&dir, &fno)) != FR_OK || fno.fname[0] == '\0')
+        if((dirent = vfs_readdir(dir)) == NULL || dirent->name[0] == '\0')
             break;
 
-        subdirs |= fno.fattrib & AM_DIR;
+        subdirs |= dirent->st_mode.directory;
 
-        if(!(fno.fattrib & AM_DIR) && (status = allowed(get_name(&fno), true)) != Filename_Filtered) {
-            sprintf(buf, "[FILE:%s/%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, get_name(&fno), (uint32_t)fno.fsize, status == Filename_Invalid ? "|UNUSABLE" : "");
+        if(!dirent->st_mode.directory && (status = allowed(dirent->name, true)) != Filename_Filtered) {
+            sprintf(buf, "[FILE:%s/%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, dirent->name, (uint32_t)dirent->size, status == Filename_Invalid ? "|UNUSABLE" : "");
             hal.stream.write(buf);
         }
     }
 
+    vfs_closedir(dir);
+    dir = NULL;
+
     if((subdirs = (subdirs && --depth)))
-        f_readdir(&dir, NULL); // Rewind
+        subdirs = (dir = vfs_opendir(*path == '\0' ? "/" : path)) != NULL;
 
     // Pass 2: Scan directories
     while(subdirs) {
 
-        if((res = f_readdir(&dir, &fno)) != FR_OK || fno.fname[0] == '\0')
+        if((dirent = vfs_readdir(dir)) == NULL || dirent->name[0] == '\0')
             break;
 
-        if(fno.fattrib & AM_DIR) { // It is a directory
+        if(dirent->st_mode.directory) { // It is a directory
             size_t pathlen = strlen(path);
-            if(pathlen + strlen(get_name(&fno)) > (MAX_PATHLEN - 1))
+            if(pathlen + strlen(dirent->name) > (MAX_PATHLEN - 1))
                 break;
-            sprintf(&path[pathlen], "/%s", get_name(&fno));
-            if((res = scan_dir(path, depth, buf)) != FR_OK)
+            sprintf(&path[pathlen], "/%s", dirent->name);
+            if((res = scan_dir(path, depth, buf)) != 0)
                 break;
             path[pathlen] = '\0';
         }
     }
 
-#ifdef NEW_FATFS
-    f_closedir(&dir);
-#endif
+    if(dir)
+        vfs_closedir(dir);
 
     return res;
 }
@@ -255,7 +237,7 @@ static FRESULT scan_dir (char *path, uint_fast8_t depth, char *buf)
 static void file_close (void)
 {
     if(file.handle) {
-        f_close(file.handle);
+        vfs_close(file.handle);
         file.handle = NULL;
     }
 }
@@ -265,9 +247,14 @@ static bool file_open (char *filename)
     if(file.handle)
         file_close();
 
-    if(f_open(&cncfile, filename, FA_READ) == FR_OK) {
-        file.handle = &cncfile;
-        file.size = f_size(file.handle);
+    if((cncfile = vfs_open(filename, "r")) != NULL) {
+
+        vfs_stat_t st;
+
+        vfs_stat(filename, &st);
+
+        file.handle = cncfile;
+        file.size = st.st_size;
         file.pos = 0;
         file.line = 0;
         file.eol = false;
@@ -281,26 +268,30 @@ static bool file_open (char *filename)
 
 static int16_t file_read (void)
 {
-    signed char c;
-    UINT count;
+    signed char c[1];
 
-    if(f_read(file.handle, &c, 1, &count) == FR_OK && count == 1)
-        file.pos = f_tell(file.handle);
+    if(vfs_read(&c, 1, 1, file.handle) == 1)
+        file.pos = vfs_tell(file.handle);
     else
-        c = -1;
+        *c = -1;
 
-    if(c == '\r' || c == '\n')
+    if(*c == '\r' || *c == '\n')
         file.eol++;
     else
         file.eol = 0;
 
-    return (int16_t)c;
+    return (int16_t)*c;
 }
 
 static bool sdcard_mount (void)
 {
     if(sdcard.on_mount) {
+
         sdcard.on_mount(&file.fs);
+
+        if(file.fs != NULL)
+            fs_fatfs_mount("/");
+
         return file.fs != NULL;
     }
 
@@ -315,6 +306,9 @@ static bool sdcard_mount (void)
         free(file.fs);
         file.fs = NULL;
     }
+
+    if(file.fs != NULL)
+        fs_fatfs_mount("/");
 
     return file.fs != NULL;
 }
@@ -333,6 +327,7 @@ static bool sdcard_unmount (void)
         if(ok && file.fs) {
             free(file.fs);
             file.fs = NULL;
+            vfs_unmount("/");
         }
     }
 
@@ -480,7 +475,7 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
     frewind = frewind || program_flow == ProgramFlow_CompletedM2; // || program_flow == ProgramFlow_CompletedM30;
 #endif
     if(frewind) {
-        f_lseek(file.handle, 0);
+        vfs_seek(file.handle, 0);
         file.pos = file.line = 0;
         file.eol = false;
         hal.stream.read = await_cycle_start;
