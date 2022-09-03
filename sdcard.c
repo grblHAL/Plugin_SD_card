@@ -406,7 +406,7 @@ static int16_t await_cycle_start (void)
 }
 
 // Drop input from current stream except realtime commands
-static ISR_CODE ISR_FUNC(bool drop_input_stream)(char c)
+ISR_CODE static bool  ISR_FUNC(drop_input_stream)(char c)
 {
     enqueue_realtime_command(c);
 

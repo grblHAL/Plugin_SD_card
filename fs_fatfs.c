@@ -153,7 +153,7 @@ static int fs_chdir (const char *path)
     return f_chdir(path);
 }
 
-char *fs_getcwd (char *buf, size_t size)
+static char *fs_getcwd (char *buf, size_t size)
 {
     static char cwd[255];
 
