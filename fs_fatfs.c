@@ -29,6 +29,8 @@
 #include "grbl/vfs.h"
 #endif
 
+#if SDCARD_ENABLE
+
 #if defined(ESP_PLATFORM)
 #include "esp_vfs_fat.h"
 #elif defined(__LPC176x__) || defined(__MSP432E401Y__)
@@ -256,6 +258,21 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
     return 0;
 }
 
+static int fs_utime (const char *filename, struct tm *modified)
+{
+#if FF_FS_READONLY == 0 && FF_USE_CHMOD == 1
+
+    FILINFO fno;
+
+    fno.fdate = (WORD)(((modified->tm_year - 80) * 512U) | modified->tm_mon * 32U | modified->tm_mday);
+    fno.ftime = (WORD)(modified->tm_hour * 2048U | modified->tm_min * 32U | modified->tm_sec / 2U);
+
+    return f_utime(filename, &fno);
+#else
+    return -1;
+#endif
+}
+
 static bool fs_getfree (vfs_free_t *free)
 {
     FATFS *fs;
@@ -273,6 +290,7 @@ static bool fs_getfree (vfs_free_t *free)
 void fs_fatfs_mount (const char *path)
 {
     static const vfs_t fs = {
+        .fs_name = "FatFs",
         .fopen = fs_open,
         .fclose = fs_close,
         .fread = fs_read,
@@ -289,9 +307,12 @@ void fs_fatfs_mount (const char *path)
         .readdir = fs_readdir,
         .fclosedir = fs_closedir,
         .fstat = fs_stat,
+        .futime = fs_utime,
         .fgetcwd = fs_getcwd,
         .fgetfree = fs_getfree
     };
 
     vfs_mount(path, &fs);
 }
+
+#endif
