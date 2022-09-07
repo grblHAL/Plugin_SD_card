@@ -553,13 +553,13 @@ static bool check_input_stream (char c)
 
 static void stream_changed (stream_type_t type)
 {
-    if(type != StreamType_SDCard && file.handle != NULL) {
+    if(type != StreamType_File && file.handle != NULL) {
 
         // Reconnect from WebUI?
         if(webui && (type != StreamType_WebSocket || hal.stream.state.webui_connected)) {
             active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // Restore previous real time handler,
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));       // save current stream pointers
-            hal.stream.type = StreamType_SDCard;                            // then redirect to read from SD card instead
+            hal.stream.type = StreamType_File;                            // then redirect to read from SD card instead
             hal.stream.read = sdcard_read;                                  // ...
 
             if(hal.stream.suspend_read)                                     // If active stream support tool change suspend
@@ -579,48 +579,56 @@ static void stream_changed (stream_type_t type)
         on_stream_changed(type);
 }
 
+status_code_t stream_file (sys_state_t state, char *fname)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(fname && file_open(fname)) {
+        gc_state.last_error = Status_OK;                            // Start with no errors
+        grbl.report.status_message(Status_OK);                      // and confirm command to originator.
+        webui = hal.stream.state.webui_connected;                   // Did WebUI start this job?
+        memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
+        hal.stream.type = StreamType_File;                        // then redirect to read from SD card instead
+        hal.stream.read = sdcard_read;                              // ...
+        if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
+            hal.stream.suspend_read = sdcard_suspend;               // then we do as well
+        else                                                        //
+            hal.stream.suspend_read = NULL;                         // else not
+        on_realtime_report = grbl.on_realtime_report;
+        grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
+
+        on_program_completed = grbl.on_program_completed;
+        grbl.on_program_completed = sdcard_on_program_completed;
+
+        grbl.report.status_message = trap_status_report;            // Redirect status message reports here
+
+        enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
+
+        if(grbl.on_stream_changed)
+            grbl.on_stream_changed(hal.stream.type);
+
+        if(grbl.on_stream_changed != stream_changed) {
+            on_stream_changed = grbl.on_stream_changed;
+            grbl.on_stream_changed = stream_changed;
+        }
+
+        retval = Status_OK;
+    } else
+        retval = Status_SDReadError;
+
+    return retval;
+}
+
 static status_code_t sd_cmd_file (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
-    if(args) {
-        if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
-            retval = Status_SystemGClock;
-        else {
-            if(file_open(args)) {
-                gc_state.last_error = Status_OK;                            // Start with no errors
-                grbl.report.status_message(Status_OK);                      // and confirm command to originator.
-                webui = hal.stream.state.webui_connected;                  // Did WebUI start this job?
-                memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
-                hal.stream.type = StreamType_SDCard;                        // then redirect to read from SD card instead
-                hal.stream.read = sdcard_read;                              // ...
-                if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
-                    hal.stream.suspend_read = sdcard_suspend;               // then we do as well
-                else                                                        //
-                    hal.stream.suspend_read = NULL;                         // else not
-                on_realtime_report = grbl.on_realtime_report;
-                grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
+    if(args)
+        retval = stream_file(state, args);
 
-                on_program_completed = grbl.on_program_completed;
-                grbl.on_program_completed = sdcard_on_program_completed;
-
-                grbl.report.status_message = trap_status_report;            // Redirect status message reports here
-
-                enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
-
-                if(grbl.on_stream_changed)
-                    grbl.on_stream_changed(hal.stream.type);
-
-                if(grbl.on_stream_changed != stream_changed) {
-                    on_stream_changed = grbl.on_stream_changed;
-                    grbl.on_stream_changed = stream_changed;
-                }
-
-                retval = Status_OK;
-            } else
-                retval = Status_SDReadError;
-        }
-    } else {
+    else {
         frewind = false;
         retval = sdcard_ls(); // (re)use line buffer for reporting filenames
     }
@@ -688,7 +696,7 @@ static status_code_t sd_cmd_unlink (sys_state_t state, char *args)
 
 static void sdcard_reset (void)
 {
-    if(hal.stream.type == StreamType_SDCard) {
+    if(hal.stream.type == StreamType_File) {
         if(file.line > 0) {
             char buf[70];
             sprintf(buf, "Reset during streaming of SD file at line: " UINT32FMT, file.line);
@@ -774,7 +782,7 @@ sdcard_events_t *sdcard_init (void)
 
 bool sdcard_busy (void)
 {
-    return hal.stream.type == StreamType_SDCard;
+    return hal.stream.type == StreamType_File;
 }
 
 sdcard_job_t *sdcard_get_job_info (void)

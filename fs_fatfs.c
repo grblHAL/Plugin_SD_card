@@ -56,7 +56,6 @@
 #define FF_DIR DIR
 #endif
 
-
 #if FF_USE_LFN
 //#define _USE_LFN FF_USE_LFN
 #define _MAX_LFN FF_MAX_LFN
@@ -152,13 +151,17 @@ static int fs_mkdir (const char *path)
 
 static int fs_chdir (const char *path)
 {
+#if FF_FS_RPATH
     return f_chdir(path);
+#else
+    return -1;
+#endif
 }
 
 static char *fs_getcwd (char *buf, size_t size)
 {
     static char cwd[255];
-
+#if FF_FS_RPATH
     if ((vfs_errno = f_getcwd(cwd, 255)) == FR_OK) {
         char *s1, *s2;
         // Strip drive information
@@ -170,6 +173,9 @@ static char *fs_getcwd (char *buf, size_t size)
             *s1 = '\0';
         }
     }
+#else
+    *cwd = '\0'; // TODO: return mount path?
+#endif
 
     return cwd;
 }
@@ -244,7 +250,7 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
             .tm_min  = (f.ftime >> 5) & 0x3f,
             .tm_hour = (f.ftime >> 11) & 0x1f,
             .tm_mday = f.fdate & 0x1f,
-            .tm_mon  = (f.fdate >> 5) & 0xf,
+            .tm_mon  = ((f.fdate >> 5) & 0xf) - 1,
             .tm_year = 80 + ((f.fdate >> 9) & 0x7f),
         };
 #ifdef ESP_PLATFORM
@@ -264,7 +270,7 @@ static int fs_utime (const char *filename, struct tm *modified)
 
     FILINFO fno;
 
-    fno.fdate = (WORD)(((modified->tm_year - 80) * 512U) | modified->tm_mon * 32U | modified->tm_mday);
+    fno.fdate = (WORD)(((modified->tm_year - 80) * 512U) | (modified->tm_mon + 1) * 32U | modified->tm_mday);
     fno.ftime = (WORD)(modified->tm_hour * 2048U | modified->tm_min * 32U | modified->tm_sec / 2U);
 
     return f_utime(filename, &fno);
@@ -286,6 +292,20 @@ static bool fs_getfree (vfs_free_t *free)
 
     return vfs_errno == FR_OK;
 }
+
+#if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
+static int fs_format (void)
+{
+    void *work = malloc(FF_MAX_SS);
+
+    FRESULT res = f_mkfs("/", FM_ANY, 0, work, work ? FF_MAX_SS : 0);
+
+    if(work)
+        free(work);
+
+    return res;
+}
+#endif
 
 void fs_fatfs_mount (const char *path)
 {
@@ -309,7 +329,10 @@ void fs_fatfs_mount (const char *path)
         .fstat = fs_stat,
         .futime = fs_utime,
         .fgetcwd = fs_getcwd,
-        .fgetfree = fs_getfree
+        .fgetfree = fs_getfree,
+#if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
+        .format = fs_format
+#endif
     };
 
     vfs_mount(path, &fs);
