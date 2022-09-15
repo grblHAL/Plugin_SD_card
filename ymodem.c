@@ -8,7 +8,7 @@
   NOTE: Receiver only, does not send initial 'C' to start transfer.
         Start transfer by sending SOH or STX.
 
-  Copyright (c) 2021 Terje Io
+  Copyright (c) 2021-2022 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -32,6 +32,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef ARDUINO
+#include "../grbl/vfs.h"
+#else
+#include "grbl/vfs.h"
+#endif
+
 typedef enum {
     YModem_NOOP = 0,
     YModem_ACK,
@@ -46,8 +52,7 @@ typedef enum {
 typedef ymodem_status_t (*process_data_ptr)(uint8_t c);
 
 typedef struct {
-    FATFS *fs;
-    FIL *handle;
+    vfs_file_t *handle;
     char filename[32];
     uint32_t filelength;
     uint32_t received;
@@ -100,7 +105,7 @@ static uint16_t crc16 (const uint8_t *buf, uint16_t len)
 static void end_transfer (bool send_ack)
 {
     if(ymodem.handle) {
-        f_close(ymodem.handle);
+        vfs_close(ymodem.handle);
         ymodem.handle = NULL;
     }
 
@@ -215,18 +220,13 @@ static ymodem_status_t await_crc (uint8_t c)
                 if(*data != '\0')
                     ymodem.filelength = atoi(data);
 
-                static FIL handle;
-                if(ymodem.fs != NULL && f_open(&handle, ymodem.filename, FA_CREATE_ALWAYS|FA_WRITE) == FR_OK)
-                    ymodem.handle = &handle;
-                else
+                if((ymodem.handle = vfs_open(ymodem.filename, "w")) == NULL)
                     status = YModem_CAN;
             }
 
             ymodem.packet_num++;
 
         } else { // Write payload to file
-
-            UINT wrlen;
 
             if(!ymodem.repeated) {
                 ymodem.packet_num++;
@@ -237,7 +237,7 @@ static ymodem_status_t await_crc (uint8_t c)
                     ymodem.packet_len -= ymodem.received - ymodem.filelength;
 
                 // Write payload
-                if(f_write(ymodem.handle, ymodem.payload, ymodem.packet_len, &wrlen) == FR_OK) {
+                if(vfs_write(ymodem.payload, ymodem.packet_len, 1, ymodem.handle) == ymodem.packet_len) {
                     status = YModem_ACK;
                     if(ymodem.completed) {
                         ymodem.idx = 0;
@@ -360,7 +360,6 @@ static bool trap_initial_soh (char c)
         memset(&ymodem, 0, sizeof(ymodem_t));                               // Init YModem variables
         ymodem.process = await_soh;
         ymodem.next_timeout = hal.get_elapsed_ticks() + 1000;
-        ymodem.fs = sdcard_getfs();
 
         return false;                                                       // Return false to add character to input buffer
     }
