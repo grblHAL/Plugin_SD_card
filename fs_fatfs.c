@@ -111,10 +111,12 @@ static size_t fs_read (void *buffer, size_t size, size_t count, vfs_file_t *file
 
 static size_t fs_write (const void *buffer, size_t size, size_t count, vfs_file_t *file)
 {
-    UINT byteswritten;
+    UINT byteswritten = 0;
 
+#if FF_FS_READONLY == 0
     if ((vfs_errno = f_write((FIL *)&file->handle, buffer, size * count, &byteswritten)) != FR_OK)
         byteswritten = 0;
+#endif
 
     return byteswritten;
 }
@@ -136,17 +138,29 @@ static bool fs_eof (vfs_file_t *file)
 
 static int fs_rename (const char *from, const char *to)
 {
+#if FF_FS_READONLY
+    return -1;
+#else
     return f_rename(from, to);
+#endif
 }
 
 static int fs_unlink (const char *filename)
 {
+#if FF_FS_READONLY
+    return -1;
+#else
     return f_unlink(filename);
+#endif
 }
 
 static int fs_mkdir (const char *path)
 {
+#if FF_FS_READONLY
+    return -1;
+#else
     return f_mkdir(path);
+#endif
 }
 
 static int fs_chdir (const char *path)
@@ -281,6 +295,9 @@ static int fs_utime (const char *filename, struct tm *modified)
 
 static bool fs_getfree (vfs_free_t *free)
 {
+#if FF_FS_READONLY
+    return false;
+#else
     FATFS *fs;
     DWORD fre_clust, tot_sect;
 
@@ -291,6 +308,7 @@ static bool fs_getfree (vfs_free_t *free)
     }
 
     return vfs_errno == FR_OK;
+#endif
 }
 
 #if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
@@ -311,6 +329,9 @@ void fs_fatfs_mount (const char *path)
 {
     static const vfs_t fs = {
         .fs_name = "FatFs",
+#if FF_FS_READONLY
+        .mode.read_only = true,
+#endif
         .fopen = fs_open,
         .fclose = fs_close,
         .fread = fs_read,
