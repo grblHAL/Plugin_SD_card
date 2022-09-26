@@ -103,6 +103,7 @@ static on_program_completed_ptr on_program_completed;
 static enqueue_realtime_command_ptr enqueue_realtime_command;
 static on_report_options_ptr on_report_options;
 static on_stream_changed_ptr on_stream_changed;
+static stream_read_ptr read_redirected;
 
 static void sdcard_end_job (bool flush);
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report);
@@ -418,7 +419,7 @@ static void trap_state_change_request (sys_state_t state)
     if(state == STATE_CYCLE) {
 
         if(hal.stream.read == await_cycle_start)
-            hal.stream.read = sdcard_read;
+            hal.stream.read = read_redirected;
 
         if(grbl.on_state_change== trap_state_change_request) {
             grbl.on_state_change = state_change_requested;
@@ -444,7 +445,7 @@ static status_code_t trap_status_report (status_code_t status_code)
 
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
-    if(hal.stream.read == sdcard_read) {
+    if(hal.stream.read == read_redirected) {
 
         char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
 
@@ -510,7 +511,7 @@ static bool sdcard_suspend (bool suspend)
         active_stream.set_enqueue_rt_handler(await_toolchange_ack);     // set handler to wait for tool change acknowledge
         grbl.report.status_message = report_status_message;             // and restore normal status messages reporting,
     } else {
-        hal.stream.read = sdcard_read;                                  // Resume reading from SD card
+        hal.stream.read = read_redirected;                              // Resume reading from SD card
         hal.stream.set_enqueue_rt_handler(drop_input_stream);           // ..
         grbl.report.status_message = trap_status_report;                // and redirect status messages back to us.
     }
@@ -559,8 +560,8 @@ static void stream_changed (stream_type_t type)
         if(webui && (type != StreamType_WebSocket || hal.stream.state.webui_connected)) {
             active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // Restore previous real time handler,
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));       // save current stream pointers
-            hal.stream.type = StreamType_File;                            // then redirect to read from SD card instead
-            hal.stream.read = sdcard_read;                                  // ...
+            hal.stream.type = StreamType_File;                              // then redirect to read from SD card instead
+            hal.stream.read = read_redirected;                              // ...
 
             if(hal.stream.suspend_read)                                     // If active stream support tool change suspend
                 hal.stream.suspend_read = sdcard_suspend;                   // then we do as well
@@ -590,7 +591,7 @@ status_code_t stream_file (sys_state_t state, char *fname)
         grbl.report.status_message(Status_OK);                      // and confirm command to originator.
         webui = hal.stream.state.webui_connected;                   // Did WebUI start this job?
         memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
-        hal.stream.type = StreamType_File;                        // then redirect to read from SD card instead
+        hal.stream.type = StreamType_File;                          // then redirect to read from SD card instead
         hal.stream.read = sdcard_read;                              // ...
         if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
             hal.stream.suspend_read = sdcard_suspend;               // then we do as well
@@ -608,6 +609,8 @@ status_code_t stream_file (sys_state_t state, char *fname)
 
         if(grbl.on_stream_changed)
             grbl.on_stream_changed(hal.stream.type);
+
+        read_redirected = hal.stream.read;
 
         if(grbl.on_stream_changed != stream_changed) {
             on_stream_changed = grbl.on_stream_changed;
@@ -735,7 +738,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.06]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.07]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
