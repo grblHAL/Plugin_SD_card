@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022 Terje Io
+  Copyright (c) 2022-2023 Terje Io
  
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -28,9 +28,11 @@
 #if LITTLEFS_ENABLE
 
 #if defined(ARDUINO)
+#include "../grbl/protocol.h"
 #include "../grbl/platform.h"
 #include "../grbl/vfs.h"
 #else
+#include "../grbl/protocol.h"
 #include "../grbl/platform.h"
 #include "../grbl/vfs.h"
 #endif
@@ -293,6 +295,11 @@ static int fs_format (void)
     return ret;
 }
 
+static void fs_mount_failed (uint_fast16_t state)
+{
+    report_message("LittleFs mount failed!", Message_Warning);
+}
+
 void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 {
     static const vfs_t littlefs = {
@@ -327,6 +334,8 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 
     if (lfs_mount(&lfs, config) == LFS_ERR_OK)
         vfs_mount(path, &littlefs);
+    else
+        protocol_enqueue_rt_command(fs_mount_failed);
 }
 
 #endif // LITTLEFS_ENABLE
