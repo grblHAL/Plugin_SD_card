@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2022 Terje Io
+  Copyright (c) 2018-2023 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -357,8 +357,9 @@ static void sdcard_end_job (bool flush)
 
     grbl.on_stream_changed = on_stream_changed;
 
-    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));       // Restore stream pointers and
-    hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // restore real time command handling.
+    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));       // Restore stream pointers,
+    hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // real time command handling and
+    report_init_fns();                                              // normal status messages reporting.
 
     if(flush)                                                       // Flush input buffer?
         hal.stream.reset_read_buffer();                             // Yes, do it.
@@ -465,7 +466,7 @@ static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_
 
 static void sdcard_restart_msg (sys_state_t state)
 {
-    report_feedback_message(Message_CycleStartToRerun);
+    grbl.report.feedback_message(Message_CycleStartToRerun);
 }
 
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode)
@@ -509,7 +510,7 @@ static bool sdcard_suspend (bool suspend)
         hal.stream.read = stream_get_null;                              // Set read function to return empty,
         active_stream.reset_read_buffer();                              // flush input buffer,
         active_stream.set_enqueue_rt_handler(await_toolchange_ack);     // set handler to wait for tool change acknowledge
-        grbl.report.status_message = report_status_message;             // and restore normal status messages reporting,
+        report_init_fns();                                              // and restore normal status messages reporting,
     } else {
         hal.stream.read = read_redirected;                              // Resume reading from SD card
         hal.stream.set_enqueue_rt_handler(drop_input_stream);           // ..
@@ -705,7 +706,7 @@ static void sdcard_reset (void)
             sprintf(buf, "Reset during streaming of SD file at line: " UINT32FMT, file.line);
             report_message(buf, Message_Plain);
         } else if(frewind)
-            report_feedback_message(Message_None);
+            grbl.report.feedback_message(Message_None);
         sdcard_end_job(true);
     }
 
