@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define BUFLEN 80
+
 #if defined(ESP_PLATFORM) || defined(STM32_PLATFORM) ||  defined(__LPC17XX__) ||  defined(__IMXRT1062__) || defined(__MSP432E401Y__)
 #define NEW_FATFS
 #endif
@@ -146,6 +148,13 @@ DWORD fatfs_getFatTime (void)
 }
 #endif
 
+static file_status_t filename_valid (char *filename)
+{
+    return strlen(filename) > 40 || strchr(filename, CMD_STATUS_REPORT) || strchr(filename, CMD_CYCLE_START) || strchr(filename, CMD_FEED_HOLD)
+            ? Filename_Invalid
+            : Filename_Valid;
+}
+
 static file_status_t allowed (char *filename, bool is_file)
 {
     uint_fast8_t idx = 0;
@@ -169,19 +178,10 @@ static file_status_t allowed (char *filename, bool is_file)
         }
     }
 
-    if(status == Filename_Valid) {
-        if(strchr(filename, ' ') ||
-            strchr(filename, CMD_STATUS_REPORT) ||
-             strchr(filename, CMD_CYCLE_START) ||
-              strchr(filename, CMD_FEED_HOLD))
-            status = Filename_Invalid;
-    //TODO: check for top bit set characters
-    }
-
-    return status;
+    return status == Filename_Valid ? filename_valid(filename) : status;
 }
 
-static int scan_dir (char *path, uint_fast8_t depth, char *buf)
+static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
 {
     int res = 0;
     bool subdirs = false;
@@ -200,9 +200,9 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf)
 
         subdirs |= dirent->st_mode.directory;
 
-        if(!dirent->st_mode.directory && (status = allowed(dirent->name, true)) != Filename_Filtered) {
-            sprintf(buf, "[FILE:%s/%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, dirent->name, (uint32_t)dirent->size, status == Filename_Invalid ? "|UNUSABLE" : "");
-            hal.stream.write(buf);
+        if(!dirent->st_mode.directory && (status = filtered ? allowed(dirent->name, true) : filename_valid(dirent->name)) != Filename_Filtered) {
+            if(snprintf(buf, BUFLEN, "[FILE:%s/%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, dirent->name, (uint32_t)dirent->size, status == Filename_Invalid ? "|UNUSABLE" : "") < BUFLEN)
+                hal.stream.write(buf);
         }
     }
 
@@ -223,7 +223,7 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf)
             if(pathlen + strlen(dirent->name) > (MAX_PATHLEN - 1))
                 break;
             sprintf(&path[pathlen], "/%s", dirent->name);
-            if((res = scan_dir(path, depth, buf)) != 0)
+            if((res = scan_dir(path, depth, buf, filtered)) != 0)
                 break;
             path[pathlen] = '\0';
         }
@@ -335,11 +335,11 @@ static bool sdcard_unmount (void)
     return file.fs == NULL;
 }
 
-static status_code_t sdcard_ls (void)
+static status_code_t sdcard_ls (bool filtered)
 {
-    char path[MAX_PATHLEN] = "", name[80]; // NB! also used as work area when recursing directories
+    char path[MAX_PATHLEN] = "", name[BUFLEN]; // NB! also used as work area when recursing directories
 
-    return scan_dir(path, 10, name) == FR_OK ? Status_OK : Status_SDFailedOpenDir;
+    return scan_dir(path, 10, name, filtered) == FR_OK ? Status_OK : Status_SDFailedOpenDir;
 }
 
 static void sdcard_end_job (bool flush)
@@ -358,6 +358,7 @@ static void sdcard_end_job (bool flush)
     grbl.on_stream_changed = on_stream_changed;
 
     memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));       // Restore stream pointers,
+    active_stream.type = StreamType_Null;                           // ...
     hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // real time command handling and
     report_init_fns();                                              // normal status messages reporting.
 
@@ -588,44 +589,51 @@ status_code_t stream_file (sys_state_t state, char *fname)
     if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(fname && file_open(fname)) {
-        gc_state.last_error = Status_OK;                            // Start with no errors
-        grbl.report.status_message(Status_OK);                      // and confirm command to originator.
-        webui = hal.stream.state.webui_connected;                   // Did WebUI start this job?
-        memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
-        hal.stream.type = StreamType_File;                          // then redirect to read from SD card instead
-        hal.stream.read = sdcard_read;                              // ...
-        if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
-            hal.stream.suspend_read = sdcard_suspend;               // then we do as well
-        else                                                        //
-            hal.stream.suspend_read = NULL;                         // else not
-        on_realtime_report = grbl.on_realtime_report;
-        grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
 
-        on_program_completed = grbl.on_program_completed;
-        grbl.on_program_completed = sdcard_on_program_completed;
+        gc_state.last_error = Status_OK;            // Start with no errors
+        grbl.report.status_message(Status_OK);      // and confirm command to originator.
+        webui = hal.stream.state.webui_connected;   // Did WebUI start this job?
 
-        grbl.report.status_message = trap_status_report;            // Redirect status message reports here
+        if(!(grbl.on_file_open && (retval = grbl.on_file_open(fname, file.handle, true)) == Status_OK)) {
 
-        enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
+            memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
+            hal.stream.type = StreamType_File;                          // then redirect to read from SD card instead
+            hal.stream.read = sdcard_read;                              // ...
+            if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
+                hal.stream.suspend_read = sdcard_suspend;               // then we do as well
+            else                                                        //
+                hal.stream.suspend_read = NULL;                         // else not
 
-        if(grbl.on_stream_changed)
-            grbl.on_stream_changed(hal.stream.type);
+            on_realtime_report = grbl.on_realtime_report;
+            grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
 
-        read_redirected = hal.stream.read;
+            on_program_completed = grbl.on_program_completed;
+            grbl.on_program_completed = sdcard_on_program_completed;
 
-        if(grbl.on_stream_changed != stream_changed) {
-            on_stream_changed = grbl.on_stream_changed;
-            grbl.on_stream_changed = stream_changed;
-        }
+            grbl.report.status_message = trap_status_report;            // Redirect status message reports here
 
-        retval = Status_OK;
+            enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
+
+            if(grbl.on_stream_changed)
+                grbl.on_stream_changed(hal.stream.type);
+
+            read_redirected = hal.stream.read;
+
+            if(grbl.on_stream_changed != stream_changed) {
+                on_stream_changed = grbl.on_stream_changed;
+                grbl.on_stream_changed = stream_changed;
+            }
+
+            retval = Status_OK;
+        } else
+            file.handle = NULL;
     } else
         retval = Status_SDReadError;
 
     return retval;
 }
 
-static status_code_t sd_cmd_file (sys_state_t state, char *args)
+static status_code_t sd_cmd_file_filtered (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
@@ -634,7 +642,22 @@ static status_code_t sd_cmd_file (sys_state_t state, char *args)
 
     else {
         frewind = false;
-        retval = sdcard_ls(); // (re)use line buffer for reporting filenames
+        retval = sdcard_ls(true); // (re)use line buffer for reporting filenames
+    }
+
+    return retval;
+}
+
+static status_code_t sd_cmd_file_all (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if(args)
+        retval = stream_file(state, args);
+
+    else {
+        frewind = false;
+        retval = sdcard_ls(false); // (re)use line buffer for reporting filenames
     }
 
     return retval;
@@ -669,14 +692,19 @@ static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
         retval = Status_SystemGClock;
     else if(args) {
         if(file_open(args)) {
-            int16_t c;
-            char buf[2] = {0};
-            while((c = file_read()) != -1) {
-                buf[0] = (char)c;
-                hal.stream.write(buf);
-            }
-            file_close();
-            retval = Status_OK;
+
+            if(!(grbl.on_file_open && (retval = grbl.on_file_open(args, file.handle, false)) == Status_OK)) {
+
+                int16_t c;
+                char buf[2] = {0};
+                while((c = file_read()) != -1) {
+                    buf[0] = (char)c;
+                    hal.stream.write(buf);
+                }
+                file_close();
+                retval = Status_OK;
+            } else
+                file.handle = NULL;
         } else
             retval = Status_SDReadError;
     }
@@ -700,7 +728,7 @@ static status_code_t sd_cmd_unlink (sys_state_t state, char *args)
 
 static void sdcard_reset (void)
 {
-    if(hal.stream.type == StreamType_File) {
+    if(hal.stream.type == StreamType_File && active_stream.type != StreamType_Null) {
         if(file.line > 0) {
             char buf[70];
             sprintf(buf, "Reset during streaming of SD file at line: " UINT32FMT, file.line);
@@ -715,7 +743,8 @@ static void sdcard_reset (void)
 
 static void onReportCommandHelp (void)
 {
-    hal.stream.write("$F - list files on SD card" ASCII_EOL);
+    hal.stream.write("$F - list files on SD card, filtered" ASCII_EOL);
+    hal.stream.write("$F+ - list all files on SD card" ASCII_EOL);
     hal.stream.write("$F=<filename> - run SD card file" ASCII_EOL);
     hal.stream.write("$FM - mount SD card" ASCII_EOL);
 #if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
@@ -739,11 +768,12 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.07]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.08]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
-    {"F", false, sd_cmd_file},
+    {"F", false, sd_cmd_file_filtered},
+    {"F+", false, sd_cmd_file_all},
     {"FM", true, sd_cmd_mount},
     {"FU", true, sd_cmd_unmount},
     {"FR", true, sd_cmd_rewind},
@@ -763,6 +793,8 @@ sys_commands_t *sdcard_get_commands()
 
 sdcard_events_t *sdcard_init (void)
 {
+    active_stream.type = StreamType_Null;
+
     driver_reset = hal.driver_reset;
     hal.driver_reset = sdcard_reset;
 
