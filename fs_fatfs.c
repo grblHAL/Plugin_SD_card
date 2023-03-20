@@ -299,7 +299,8 @@ static bool fs_getfree (vfs_free_t *free)
     return false;
 #else
     FATFS *fs;
-    DWORD fre_clust, tot_sect;
+    DWORD fre_clust;
+    uint64_t tot_sect;
 
     if((vfs_errno = f_getfree("", &fre_clust, &fs)) == FR_OK) {
         tot_sect = (fs->n_fatent - 2) * fs->csize;
