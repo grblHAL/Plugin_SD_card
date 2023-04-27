@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022 Terje Io
+  Copyright (c) 2022-2023 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -333,6 +333,7 @@ void fs_fatfs_mount (const char *path)
 #if FF_FS_READONLY
         .mode.read_only = true,
 #endif
+        .removable = true,
         .fopen = fs_open,
         .fclose = fs_close,
         .fread = fs_read,
