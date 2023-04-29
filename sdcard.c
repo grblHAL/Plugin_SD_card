@@ -768,17 +768,17 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.08]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.09]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
-    {"F", false, sd_cmd_file_filtered},
-    {"F+", false, sd_cmd_file_all},
-    {"FM", true, sd_cmd_mount},
-    {"FU", true, sd_cmd_unmount},
-    {"FR", true, sd_cmd_rewind},
-    {"FD", false, sd_cmd_unlink},
-    {"F<", false, sd_cmd_to_output},
+    {"F", sd_cmd_file_filtered},
+    {"F+", sd_cmd_file_all},
+    {"FM", sd_cmd_mount, { .noargs = On } },
+    {"FU", sd_cmd_unmount, { .noargs = On } },
+    {"FR", sd_cmd_rewind, { .noargs = On } },
+    {"FD", sd_cmd_unlink },
+    {"F<", sd_cmd_to_output },
 };
 
 static sys_commands_t sdcard_commands = {
