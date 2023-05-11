@@ -46,6 +46,7 @@
 #endif
 
 #include "ymodem.h"
+#include "macros.h"
 #include "fs_fatfs.h"
 
 #if defined(NEW_FATFS)
@@ -106,10 +107,12 @@ static enqueue_realtime_command_ptr enqueue_realtime_command;
 static on_report_options_ptr on_report_options;
 static on_stream_changed_ptr on_stream_changed;
 static stream_read_ptr read_redirected;
+static status_message_ptr status_message = NULL;
 
 static void sdcard_end_job (bool flush);
 static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report);
 static void trap_state_change_request(uint_fast16_t state);
+static status_code_t trap_status_messages (status_code_t status_code);
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode);
 //static report_t active_reports;
 
@@ -174,7 +177,7 @@ static file_status_t allowed (char *filename, bool is_file)
         while(status == Filename_Filtered && filetypes[idx][0]) {
             if(!strcmp(filetype, filetypes[idx]))
                 status = Filename_Valid;
-            idx++;;
+            idx++;
         }
     }
 
@@ -360,15 +363,16 @@ static void sdcard_end_job (bool flush)
     memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));       // Restore stream pointers,
     active_stream.type = StreamType_Null;                           // ...
     hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // real time command handling and
-    report_init_fns();                                              // normal status messages reporting.
+    if(grbl.report.status_message == trap_status_messages)          // ...
+        grbl.report.status_message = status_message;                // normal status message handling.
+
+    status_message = NULL;
 
     if(flush)                                                       // Flush input buffer?
         hal.stream.reset_read_buffer();                             // Yes, do it.
 
     on_realtime_report = NULL;
     state_change_requested = NULL;
-
-    report_init_fns();
 
     webui = frewind = false;
 
@@ -433,12 +437,21 @@ static void trap_state_change_request (sys_state_t state)
         state_change_requested(state);
 }
 
-static status_code_t trap_status_report (status_code_t status_code)
+static status_code_t trap_status_messages (status_code_t status_code)
 {
-    if(status_code != Status_OK) { // TODO: all errors should terminate job?
+    if(hal.stream.read != read_redirected)
+        status_code = status_message(status_code);
+
+    else if(status_code != Status_OK) {
+
+        // TODO: all errors should terminate job?
         char buf[50]; // TODO: check if extended error reports are permissible
         sprintf(buf, "error:%d in SD file at line " UINT32FMT ASCII_EOL, (uint8_t)status_code, file.line);
         hal.stream.write(buf);
+
+        if(grbl.report.status_message == trap_status_messages && (grbl.report.status_message = status_message))
+            grbl.report.status_message(status_code);
+
         sdcard_end_job(true);
     }
 
@@ -510,12 +523,10 @@ static bool sdcard_suspend (bool suspend)
     if(suspend) {
         hal.stream.read = stream_get_null;                              // Set read function to return empty,
         active_stream.reset_read_buffer();                              // flush input buffer,
-        active_stream.set_enqueue_rt_handler(await_toolchange_ack);     // set handler to wait for tool change acknowledge
-        report_init_fns();                                              // and restore normal status messages reporting,
+        active_stream.set_enqueue_rt_handler(await_toolchange_ack);     // and set handler to wait for tool change acknowledge.
     } else {
         hal.stream.read = read_redirected;                              // Resume reading from SD card
         hal.stream.set_enqueue_rt_handler(drop_input_stream);           // ..
-        grbl.report.status_message = trap_status_report;                // and redirect status messages back to us.
     }
 
     return true;
@@ -610,7 +621,8 @@ status_code_t stream_file (sys_state_t state, char *fname)
             on_program_completed = grbl.on_program_completed;
             grbl.on_program_completed = sdcard_on_program_completed;
 
-            grbl.report.status_message = trap_status_report;            // Redirect status message reports here
+            status_message = grbl.report.status_message;                // Add trap for status messages
+            grbl.report.status_message = trap_status_messages;          // so we can terminate on errors.
 
             enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
 
@@ -813,6 +825,9 @@ sdcard_events_t *sdcard_init (void)
     if(hal.stream.write_char != NULL)
         ymodem_init();
 #endif
+
+    fs_macros_init();
+
     return &sdcard;
 }
 
