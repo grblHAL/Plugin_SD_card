@@ -33,8 +33,14 @@
 #include "grbl/hal.h"
 #include "grbl/state_machine.h"
 
-static macro_id_t macro_id = 0;
+#if NGC_EXPRESSIONS_ENABLE
+#define FILEHANDLE sys.macro_file
+#else
+#define FILEHANDLE file
 static vfs_file_t *file = NULL;
+#endif
+
+static macro_id_t macro_id = 0;
 static on_report_options_ptr on_report_options;
 static on_macro_execute_ptr on_macro_execute;
 static on_macro_return_ptr on_macro_return = NULL;
@@ -52,10 +58,10 @@ static void end_macro (void)
     if(hal.stream.read == file_read)
         hal.stream.read = stream_read;
 
-    if(file) {
+    if(FILEHANDLE) {
 
-        vfs_close(file);
-        file = NULL;
+        vfs_close(FILEHANDLE);
+        FILEHANDLE = NULL;
 
         grbl.on_macro_return = on_macro_return;
         on_macro_return = NULL;
@@ -83,7 +89,7 @@ static int16_t file_read (void)
 
     char c;
 
-    if(vfs_read(&c, 1, 1, file) == 1) {
+    if(vfs_read(&c, 1, 1, FILEHANDLE) == 1) {
         if(c == ASCII_CR || c == ASCII_LF) {
             if(eol_ok)
                 return SERIAL_NO_DATA;
@@ -91,6 +97,8 @@ static int16_t file_read (void)
         } else
             eol_ok = false;
     } else if(eol_ok) {
+        if(status_message)
+            status_message(gc_state.last_error);
         end_macro();            // Done
         return SERIAL_NO_DATA;  // ...
     } else {
@@ -105,6 +113,8 @@ static int16_t file_read (void)
 // If an error is detected macro execution will be stopped and the status_code reported.
 static status_code_t trap_status_messages (status_code_t status_code)
 {
+    gc_state.last_error = status_code;
+
     if(hal.stream.read != file_read)
         status_code = status_message(status_code);
 
@@ -129,22 +139,22 @@ static status_code_t macro_execute (macro_id_t macro)
 {
     bool ok = false;
 
-    if(file == NULL && macro >= 100 && state_get() == STATE_IDLE) {
+    if(FILEHANDLE == NULL && macro >= 100 && state_get() == STATE_IDLE) {
 
         char filename[32];
 
 #if LITTLEFS_ENABLE
         sprintf(filename, "/littlefs/P%d.macro", macro);
 
-        if((file = vfs_open(filename, "r")) == NULL)
+        if((FILEHANDLE = vfs_open(filename, "r")) == NULL)
 #endif
         {
             sprintf(filename, "/P%d.macro", macro);
 
-            file = vfs_open(filename, "r");
+            FILEHANDLE = vfs_open(filename, "r");
         }
 
-        if((ok = !!file)) {
+        if((ok = !!FILEHANDLE)) {
 
             macro_id = macro;
 
@@ -168,7 +178,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.02]" ASCII_EOL);
 }
 
 void fs_macros_init (void)
