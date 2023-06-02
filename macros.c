@@ -33,14 +33,18 @@
 #include "grbl/hal.h"
 #include "grbl/state_machine.h"
 
-#if NGC_EXPRESSIONS_ENABLE
-#define FILEHANDLE sys.macro_file
-#else
-#define FILEHANDLE file
-static vfs_file_t *file = NULL;
+#ifndef MACRO_STACK_DEPTH
+#define MACRO_STACK_DEPTH 1 // for now
 #endif
 
-static macro_id_t macro_id = 0;
+typedef struct {
+    macro_id_t id;
+    vfs_file_t *file;
+//    uint32_t line;
+} macro_stack_entry_t;
+
+static volatile int_fast16_t stack_idx = -1;
+static macro_stack_entry_t macro[MACRO_STACK_DEPTH] = {0};
 static on_report_options_ptr on_report_options;
 static on_macro_execute_ptr on_macro_execute;
 static on_macro_return_ptr on_macro_return = NULL;
@@ -55,13 +59,21 @@ static status_code_t trap_status_messages (status_code_t status_code);
 // and restores normal operation.
 static void end_macro (void)
 {
-    if(hal.stream.read == file_read)
-        hal.stream.read = stream_read;
+    if(stack_idx >= 0) {
+        if(macro[stack_idx].file) {
+            vfs_close(macro[stack_idx].file);
+            macro[stack_idx].file = NULL;
+        }
+        stack_idx--;
+#if NGC_EXPRESSIONS_ENABLE
+        sys.macro_file = stack_idx >= 0 ? macro[stack_idx].file : NULL;
+#endif
+    }
 
-    if(FILEHANDLE) {
+    if(stack_idx == -1) {
 
-        vfs_close(FILEHANDLE);
-        FILEHANDLE = NULL;
+        if(hal.stream.read == file_read)
+            hal.stream.read = stream_read;
 
         grbl.on_macro_return = on_macro_return;
         on_macro_return = NULL;
@@ -76,8 +88,10 @@ static void end_macro (void)
 // Called on a soft reset so that normal operation can be restored.
 static void plugin_reset (void)
 {
-    end_macro();    // End macro if currently running.
-    driver_reset(); // Call the next reset handler in the chain.
+    while(stack_idx >= 0)
+        end_macro();
+
+    driver_reset();
 }
 
 // Macro stream input function.
@@ -89,7 +103,7 @@ static int16_t file_read (void)
 
     char c;
 
-    if(vfs_read(&c, 1, 1, FILEHANDLE) == 1) {
+    if(vfs_read(&c, 1, 1, macro[stack_idx].file) == 1) {
         if(c == ASCII_CR || c == ASCII_LF) {
             if(eol_ok)
                 return SERIAL_NO_DATA;
@@ -121,7 +135,7 @@ static status_code_t trap_status_messages (status_code_t status_code)
     else if(status_code != Status_OK) {
 
         char msg[40];
-        sprintf(msg, "error %d in macro P%d.macro", (uint8_t)status_code, macro_id);
+        sprintf(msg, "error %d in macro P%d.macro", (uint8_t)status_code, macro[stack_idx].id);
         report_message(msg, Message_Warning);
 
         hal.stream.read = stream_read; // restore origial input stream
@@ -129,47 +143,56 @@ static status_code_t trap_status_messages (status_code_t status_code)
         if(grbl.report.status_message == trap_status_messages && (grbl.report.status_message = status_message))
             status_code = grbl.report.status_message(status_code);
 
-        end_macro();
+        while(stack_idx >= 0)
+            end_macro();
     }
 
     return status_code;
 }
 
-static status_code_t macro_execute (macro_id_t macro)
+static status_code_t macro_execute (macro_id_t macro_id)
 {
     bool ok = false;
 
-    if(FILEHANDLE == NULL && macro >= 100 && state_get() == STATE_IDLE) {
+    if(stack_idx < (MACRO_STACK_DEPTH - 1) && macro_id >= 100 && state_get() == STATE_IDLE) {
 
         char filename[32];
+        vfs_file_t *file;
 
 #if LITTLEFS_ENABLE
-        sprintf(filename, "/littlefs/P%d.macro", macro);
+        sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-        if((FILEHANDLE = vfs_open(filename, "r")) == NULL)
+        if((file = vfs_open(filename, "r")) == NULL)
 #endif
         {
-            sprintf(filename, "/P%d.macro", macro);
+            sprintf(filename, "/P%d.macro", macro_id);
 
-            FILEHANDLE = vfs_open(filename, "r");
+            file = vfs_open(filename, "r");
         }
 
-        if((ok = !!FILEHANDLE)) {
+        if((ok = !!file)) {
 
-            macro_id = macro;
+            stack_idx++;
+            macro[stack_idx].file = file;
+            macro[stack_idx].id = macro_id;
+#if NGC_EXPRESSIONS_ENABLE
+            sys.macro_file = file;
+#endif
 
-            stream_read = hal.stream.read;                      // Redirect input stream to read from the macro instead of
-            hal.stream.read = file_read;                        // the active stream. This ensures that input streams are not mingled.
+            if(hal.stream.read != file_read) {
+                stream_read = hal.stream.read;                      // Redirect input stream to read from the macro instead of
+                hal.stream.read = file_read;                        // the active stream. This ensures that input streams are not mingled.
 
-            status_message = grbl.report.status_message;        // Add trap for status messages
-            grbl.report.status_message = trap_status_messages;  // so we can terminate on errors.
+                status_message = grbl.report.status_message;        // Add trap for status messages
+                grbl.report.status_message = trap_status_messages;  // so we can terminate on errors.
 
-            on_macro_return = grbl.on_macro_return;
-            grbl.on_macro_return = end_macro;
+                on_macro_return = grbl.on_macro_return;
+                grbl.on_macro_return = end_macro;
+            }
         }
     }
 
-    return ok ? Status_OK : (on_macro_execute ? on_macro_execute(macro) : Status_Unhandled);
+    return ok ? Status_OK : (on_macro_execute ? on_macro_execute(macro_id) : Status_Unhandled);
 }
 
 // Add info about our plugin to the $I report.
