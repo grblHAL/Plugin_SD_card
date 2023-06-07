@@ -32,6 +32,7 @@
 
 #include "grbl/hal.h"
 #include "grbl/state_machine.h"
+#include "grbl/tool_change.h"
 
 #ifndef MACRO_STACK_DEPTH
 #define MACRO_STACK_DEPTH 1 // for now
@@ -54,6 +55,12 @@ static driver_reset_ptr driver_reset;
 
 static int16_t file_read (void);
 static status_code_t trap_status_messages (status_code_t status_code);
+
+#if NGC_EXPRESSIONS_ENABLE
+static on_vfs_mount_ptr on_vfs_mount;
+static on_vfs_unmount_ptr on_vfs_unmount;
+static char tc_path[15];
+#endif
 
 // Ends macro execution if currently running
 // and restores normal operation.
@@ -132,7 +139,7 @@ static status_code_t trap_status_messages (status_code_t status_code)
     if(hal.stream.read != file_read)
         status_code = status_message(status_code);
 
-    else if(status_code != Status_OK) {
+    else if(!(status_code == Status_OK || status_code == Status_Unhandled)) {
 
         char msg[40];
         sprintf(msg, "error %d in macro P%d.macro", (uint8_t)status_code, macro[stack_idx].id);
@@ -148,6 +155,27 @@ static status_code_t trap_status_messages (status_code_t status_code)
     }
 
     return status_code;
+}
+
+static void macro_start (vfs_file_t *file, macro_id_t macro_id)
+{
+    stack_idx++;
+    macro[stack_idx].file = file;
+    macro[stack_idx].id = macro_id;
+#if NGC_EXPRESSIONS_ENABLE
+    sys.macro_file = file;
+#endif
+
+    if(hal.stream.read != file_read) {
+        stream_read = hal.stream.read;                      // Redirect input stream to read from the macro instead of
+        hal.stream.read = file_read;                        // the active stream. This ensures that input streams are not mingled.
+
+        status_message = grbl.report.status_message;        // Add trap for status messages
+        grbl.report.status_message = trap_status_messages;  // so we can terminate on errors.
+
+        on_macro_return = grbl.on_macro_return;
+        grbl.on_macro_return = end_macro;
+    }
 }
 
 static status_code_t macro_execute (macro_id_t macro_id)
@@ -170,30 +198,96 @@ static status_code_t macro_execute (macro_id_t macro_id)
             file = vfs_open(filename, "r");
         }
 
-        if((ok = !!file)) {
-
-            stack_idx++;
-            macro[stack_idx].file = file;
-            macro[stack_idx].id = macro_id;
-#if NGC_EXPRESSIONS_ENABLE
-            sys.macro_file = file;
-#endif
-
-            if(hal.stream.read != file_read) {
-                stream_read = hal.stream.read;                      // Redirect input stream to read from the macro instead of
-                hal.stream.read = file_read;                        // the active stream. This ensures that input streams are not mingled.
-
-                status_message = grbl.report.status_message;        // Add trap for status messages
-                grbl.report.status_message = trap_status_messages;  // so we can terminate on errors.
-
-                on_macro_return = grbl.on_macro_return;
-                grbl.on_macro_return = end_macro;
-            }
-        }
+        if((ok = !!file))
+            macro_start(file, macro_id);
     }
 
     return ok ? Status_OK : (on_macro_execute ? on_macro_execute(macro_id) : Status_Unhandled);
 }
+
+#if NGC_EXPRESSIONS_ENABLE
+
+// Set next and/or current tool. Called by gcode.c on on a Tn or M61 command (via HAL).
+static void tool_select (tool_data_t *tool, bool next)
+{
+    vfs_file_t *file;
+    char filename[30];
+
+    if(tool->tool > 0 && (file = vfs_open(strcat(strcpy(filename, tc_path), "ts.macro"), "r")))
+        macro_start(file, 98);
+}
+
+static status_code_t tool_change (parser_state_t *parser_state)
+{
+    vfs_file_t *file;
+    char filename[30];
+    int32_t current_tool = (int32_t)ngc_named_param_get_by_id(NGCParam_current_tool),
+            next_tool =  (int32_t)ngc_named_param_get_by_id(NGCParam_selected_tool);
+
+    if(next_tool == -1)
+        return Status_GCodeToolError;
+
+    if(current_tool == next_tool || next_tool == 0)
+        return Status_OK;
+
+    if((file = vfs_open(strcat(strcpy(filename, tc_path), "tc.macro"), "r")))
+        macro_start(file, 99);
+    else
+        return Status_GCodeToolError;
+
+    return Status_Unhandled;
+}
+
+static void atc_path_fix (char *path)
+{
+    path = strchr(path, '\0') - 1;
+    if(*path != '/')
+        strcat(path, "/");
+}
+
+static void atc_macros_attach (const char *path, const vfs_t *fs)
+{
+    vfs_stat_t st;
+    char filename[30];
+
+    if(!hal.driver_cap.atc) {
+
+        strcpy(tc_path, path);
+        atc_path_fix(tc_path);
+
+        if(vfs_stat(strcat(strcpy(filename, tc_path), "tc.macro"), &st) == 0) {
+            hal.driver_cap.atc = On;
+            hal.tool.select = tool_select;
+            hal.tool.change = tool_change;
+        }
+    }
+
+    if(on_vfs_mount)
+        on_vfs_mount(path, fs);
+}
+
+static void atc_macros_detach (const char *path)
+{
+    char tc_path[15];
+
+    if(hal.tool.select == tool_select) {
+
+        strcpy(tc_path, path);
+        atc_path_fix(tc_path);
+
+        if(!strcmp(path, tc_path)) {
+            hal.driver_cap.atc = Off;
+            hal.tool.select = NULL;
+            hal.tool.change = NULL;
+            tc_init();
+        }
+    }
+
+    if(on_vfs_unmount)
+        on_vfs_unmount(path);
+}
+
+#endif // NGC_EXPRESSIONS_ENABLE
 
 // Add info about our plugin to the $I report.
 static void report_options (bool newopt)
@@ -201,7 +295,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.02]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.03]" ASCII_EOL);
 }
 
 void fs_macros_init (void)
@@ -214,6 +308,16 @@ void fs_macros_init (void)
 
     driver_reset = hal.driver_reset;
     hal.driver_reset = plugin_reset;
+
+#if NGC_EXPRESSIONS_ENABLE
+
+    on_vfs_mount = grbl.on_vfs_mount;
+    grbl.on_vfs_mount = atc_macros_attach;
+
+    on_vfs_unmount = grbl.on_vfs_unmount;
+    grbl.on_vfs_unmount = atc_macros_detach;
+
+#endif
 }
 
 #endif // SDCARD_ENABLE || LITTLEFS_ENABLE
