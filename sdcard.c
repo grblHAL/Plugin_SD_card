@@ -61,11 +61,13 @@ static char *dev = "";
 
 char const *const filetypes[] = {
     "nc",
+    "ncc",
+    "ngc",
+    "cnc",
     "gcode",
     "txt",
     "text",
     "tap",
-    "ngc",
     ""
 };
 
