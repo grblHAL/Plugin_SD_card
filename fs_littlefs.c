@@ -321,7 +321,7 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
         .fclosedir = fs_closedir,
         .fstat = fs_stat,
         .futime = fs_utime,
-        .fgetcwd = fs_getcwd,
+//        .fgetcwd = fs_getcwd,
         .fgetfree = fs_getfree,
         .format = fs_format
     };

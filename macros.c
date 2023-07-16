@@ -50,8 +50,8 @@ static on_report_options_ptr on_report_options;
 static on_macro_execute_ptr on_macro_execute;
 static on_macro_return_ptr on_macro_return = NULL;
 static status_message_ptr status_message = NULL;
-static stream_read_ptr stream_read;
 static driver_reset_ptr driver_reset;
+static io_stream_t active_stream;
 
 static int16_t file_read (void);
 static status_code_t trap_status_messages (status_code_t status_code);
@@ -72,15 +72,13 @@ static void end_macro (void)
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
-#if NGC_EXPRESSIONS_ENABLE
-        sys.macro_file = stack_idx >= 0 ? macro[stack_idx].file : NULL;
-#endif
+        hal.stream.file = stack_idx >= 0 ? macro[stack_idx].file : NULL;
     }
 
     if(stack_idx == -1) {
 
         if(hal.stream.read == file_read)
-            hal.stream.read = stream_read;
+            memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));
 
         grbl.on_macro_return = on_macro_return;
         on_macro_return = NULL;
@@ -145,8 +143,6 @@ static status_code_t trap_status_messages (status_code_t status_code)
         sprintf(msg, "error %d in macro P%d.macro", (uint8_t)status_code, macro[stack_idx].id);
         report_message(msg, Message_Warning);
 
-        hal.stream.read = stream_read; // restore origial input stream
-
         if(grbl.report.status_message == trap_status_messages && (grbl.report.status_message = status_message))
             status_code = grbl.report.status_message(status_code);
 
@@ -162,20 +158,21 @@ static void macro_start (vfs_file_t *file, macro_id_t macro_id)
     stack_idx++;
     macro[stack_idx].file = file;
     macro[stack_idx].id = macro_id;
-#if NGC_EXPRESSIONS_ENABLE
-    sys.macro_file = file;
-#endif
 
     if(hal.stream.read != file_read) {
-        stream_read = hal.stream.read;                      // Redirect input stream to read from the macro instead of
-        hal.stream.read = file_read;                        // the active stream. This ensures that input streams are not mingled.
 
-        status_message = grbl.report.status_message;        // Add trap for status messages
-        grbl.report.status_message = trap_status_messages;  // so we can terminate on errors.
+        memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Redirect input stream to read from the macro instead
+        hal.stream.type = StreamType_File;                          // from the active stream.
+        hal.stream.read = file_read;                                // This ensures that input streams are not mingled.
+
+        status_message = grbl.report.status_message;                // Add trap for status messages
+        grbl.report.status_message = trap_status_messages;          // so we can terminate on errors.
 
         on_macro_return = grbl.on_macro_return;
         grbl.on_macro_return = end_macro;
     }
+
+    hal.stream.file = file;
 }
 
 static status_code_t macro_execute (macro_id_t macro_id)
@@ -295,7 +292,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.03]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.04]" ASCII_EOL);
 }
 
 void fs_macros_init (void)

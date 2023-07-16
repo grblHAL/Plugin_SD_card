@@ -244,6 +244,8 @@ static void file_close (void)
 {
     if(file.handle) {
         vfs_close(file.handle);
+        if(hal.stream.file == file.handle)
+            hal.stream.file = NULL;
         file.handle = NULL;
     }
 }
@@ -576,6 +578,7 @@ static void stream_changed (stream_type_t type)
             active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // Restore previous real time handler,
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));       // save current stream pointers
             hal.stream.type = StreamType_File;                              // then redirect to read from SD card instead
+            hal.stream.file = file.handle;                                  // ...
             hal.stream.read = read_redirected;                              // ...
 
             if(hal.stream.suspend_read)                                     // If active stream support tool change suspend
@@ -611,11 +614,12 @@ status_code_t stream_file (sys_state_t state, char *fname)
 
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
             hal.stream.type = StreamType_File;                          // then redirect to read from SD card instead
+            hal.stream.file = file.handle;                              // ...
             hal.stream.read = sdcard_read;                              // ...
             if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
                 hal.stream.suspend_read = sdcard_suspend;               // then we do as well
             else                                                        //
-                hal.stream.suspend_read = NULL;                         // else not
+                hal.stream.suspend_read = NULL;                         // else not.
 
             on_realtime_report = grbl.on_realtime_report;
             grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
@@ -782,7 +786,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.09]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.10]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
