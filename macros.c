@@ -210,7 +210,7 @@ static void tool_select (tool_data_t *tool, bool next)
     vfs_file_t *file;
     char filename[30];
 
-    if(tool->tool > 0 && (file = vfs_open(strcat(strcpy(filename, tc_path), "ts.macro"), "r")))
+    if(tool->tool_id > 0 && (file = vfs_open(strcat(strcpy(filename, tc_path), "ts.macro"), "r")))
         macro_start(file, 98);
 }
 
@@ -292,7 +292,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.04]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.05]" ASCII_EOL);
 }
 
 void fs_macros_init (void)
