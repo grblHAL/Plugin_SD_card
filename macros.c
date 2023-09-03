@@ -49,6 +49,7 @@ static macro_stack_entry_t macro[MACRO_STACK_DEPTH] = {0};
 static on_report_options_ptr on_report_options;
 static on_macro_execute_ptr on_macro_execute;
 static on_macro_return_ptr on_macro_return = NULL;
+static pallet_shuttle_ptr on_pallet_shuttle;
 static status_message_ptr status_message = NULL;
 static driver_reset_ptr driver_reset;
 static io_stream_t active_stream;
@@ -235,6 +236,19 @@ static status_code_t tool_change (parser_state_t *parser_state)
     return Status_Unhandled;
 }
 
+// Perform a pallet shuttle.
+static void pallet_shuttle (void)
+{
+    vfs_file_t *file;
+    char filename[30];
+
+    if((file = vfs_open(strcat(strcpy(filename, tc_path), "ps.macro"), "r")))
+        macro_start(file, 97);
+
+    if(on_pallet_shuttle)
+        on_pallet_shuttle();
+}
+
 static void atc_path_fix (char *path)
 {
     path = strchr(path, '\0') - 1;
@@ -259,6 +273,15 @@ static void atc_macros_attach (const char *path, const vfs_t *fs)
         }
     }
 
+    if(on_pallet_shuttle == NULL && vfs_stat(strcat(strcpy(filename, tc_path), "ps.macro"), &st) == 0) {
+
+        strcpy(tc_path, path);
+        atc_path_fix(tc_path);
+
+        on_pallet_shuttle = hal.pallet_shuttle;
+        hal.pallet_shuttle = pallet_shuttle;
+    }
+
     if(on_vfs_mount)
         on_vfs_mount(path, fs);
 }
@@ -280,6 +303,11 @@ static void atc_macros_detach (const char *path)
         }
     }
 
+    if(hal.pallet_shuttle == pallet_shuttle) {
+        hal.pallet_shuttle = on_pallet_shuttle;
+        on_pallet_shuttle = NULL;
+    }
+
     if(on_vfs_unmount)
         on_vfs_unmount(path);
 }
@@ -292,7 +320,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.05]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.06]" ASCII_EOL);
 }
 
 void fs_macros_init (void)
