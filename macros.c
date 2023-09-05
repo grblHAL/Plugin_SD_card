@@ -49,7 +49,6 @@ static macro_stack_entry_t macro[MACRO_STACK_DEPTH] = {0};
 static on_report_options_ptr on_report_options;
 static on_macro_execute_ptr on_macro_execute;
 static on_macro_return_ptr on_macro_return = NULL;
-static pallet_shuttle_ptr on_pallet_shuttle;
 static status_message_ptr status_message = NULL;
 static driver_reset_ptr driver_reset;
 static io_stream_t active_stream;
@@ -60,6 +59,7 @@ static status_code_t trap_status_messages (status_code_t status_code);
 #if NGC_EXPRESSIONS_ENABLE
 static on_vfs_mount_ptr on_vfs_mount;
 static on_vfs_unmount_ptr on_vfs_unmount;
+static pallet_shuttle_ptr on_pallet_shuttle;
 static char tc_path[15];
 #endif
 
