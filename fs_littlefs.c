@@ -332,9 +332,11 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
     if (lfs_mount(&lfs, config) != LFS_ERR_OK)
         lfs_format(&lfs, config);
 
-    if (lfs_mount(&lfs, config) == LFS_ERR_OK)
-        vfs_mount(path, &littlefs);
-    else
+    if (lfs_mount(&lfs, config) == LFS_ERR_OK) {
+        vfs_st_mode_t mode = {0};
+        mode.hidden = settings.fs_options.lfs_hidden;
+        hal.driver_cap.littlefs = vfs_mount(path, &littlefs, mode);
+    } else
         protocol_enqueue_rt_command(fs_mount_failed);
 }
 

@@ -321,6 +321,12 @@ static bool sdcard_mount (void)
     return file.fs != NULL;
 }
 
+static void sdcard_auto_mount (sys_state_t state)
+{
+    if(!sdcard_mount())
+        report_message("SD card automount failed", Message_Info);
+}
+
 static bool sdcard_unmount (void)
 {
     bool ok = true;
@@ -786,7 +792,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.10]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.11]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
@@ -813,6 +819,8 @@ sdcard_events_t *sdcard_init (void)
 {
     active_stream.type = StreamType_Null;
 
+    hal.driver_cap.sd_card = On;
+
     driver_reset = hal.driver_reset;
     hal.driver_reset = sdcard_reset;
 
@@ -833,6 +841,9 @@ sdcard_events_t *sdcard_init (void)
 #endif
 
     fs_macros_init();
+
+    if(settings.fs_options.sd_mount_on_boot)
+        protocol_enqueue_rt_command(sdcard_auto_mount);
 
     return &sdcard;
 }

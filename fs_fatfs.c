@@ -330,9 +330,6 @@ void fs_fatfs_mount (const char *path)
 {
     static const vfs_t fs = {
         .fs_name = "FatFs",
-#if FF_FS_READONLY
-        .mode.read_only = true,
-#endif
         .removable = true,
         .fopen = fs_open,
         .fclose = fs_close,
@@ -358,7 +355,15 @@ void fs_fatfs_mount (const char *path)
 #endif
     };
 
-    vfs_mount(path, &fs);
+    vfs_st_mode_t mode = {
+#if FF_FS_READONLY
+        .read_only = true
+#else
+        0
+#endif
+    };
+
+    vfs_mount(path, &fs, mode);
 }
 
 #endif
