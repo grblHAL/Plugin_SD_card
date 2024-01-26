@@ -101,7 +101,6 @@ static bool frewind = false, webui = false;
 static io_stream_t active_stream;
 static sdcard_events_t sdcard;
 static driver_reset_ptr driver_reset;
-static on_report_command_help_ptr on_report_command_help;
 static on_realtime_report_ptr on_realtime_report;
 static on_state_change_ptr state_change_requested;
 static on_program_completed_ptr on_program_completed;
@@ -321,7 +320,7 @@ static bool sdcard_mount (void)
     return file.fs != NULL;
 }
 
-static void sdcard_auto_mount (sys_state_t state)
+static void sdcard_auto_mount (void *data)
 {
     if(!sdcard_mount())
         report_message("SD card automount failed", Message_Info);
@@ -488,7 +487,7 @@ static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_
         on_realtime_report(stream_write, report);
 }
 
-static void sdcard_restart_msg (sys_state_t state)
+static void sdcard_restart_msg (void *data)
 {
     grbl.report.feedback_message(Message_CycleStartToRerun);
 }
@@ -509,7 +508,7 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
             state_change_requested = grbl.on_state_change;
             grbl.on_state_change = trap_state_change_request;
         }
-        protocol_enqueue_rt_command(sdcard_restart_msg);
+        protocol_enqueue_foreground_task(sdcard_restart_msg, NULL);
     } else
         sdcard_end_job(true);
 
@@ -542,9 +541,9 @@ static bool sdcard_suspend (bool suspend)
     return true;
 }
 
-static void terminate_job (sys_state_t state)
+static void terminate_job (void *data)
 {
-    if(state == STATE_CYCLE) {
+    if(state_get() == STATE_CYCLE) {
         // Halt motion so that executing stop does not result in loss of position
         system_set_exec_state_flag(EXEC_MOTION_CANCEL);
         do {
@@ -568,7 +567,7 @@ static bool check_input_stream (char c)
     if(!(ok = enqueue_realtime_command(c))) {
         if(hal.stream.read != stream_get_null) {
             hal.stream.read = stream_get_null;
-            protocol_enqueue_rt_command(terminate_job);
+            protocol_enqueue_foreground_task(terminate_job, NULL);
         }
     }
 
@@ -597,7 +596,7 @@ static void stream_changed (stream_type_t type)
             else                                                                                    // else
                 enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(check_input_stream);   // check for stream takeover
         } else // Terminate job.
-            protocol_enqueue_rt_command(terminate_job);
+            protocol_enqueue_foreground_task(terminate_job, NULL);
     }
 
     if(on_stream_changed)
@@ -745,7 +744,7 @@ static status_code_t sd_cmd_unlink (sys_state_t state, char *args)
     if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(args)
-        retval = f_unlink(args) ? Status_OK : Status_SDReadError;
+        retval = vfs_unlink(args) ? Status_OK : Status_SDReadError;
 
     return retval;
 }
@@ -778,7 +777,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.12]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.13]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {
@@ -801,19 +800,6 @@ static sys_commands_t sdcard_commands = {
     .commands = sdcard_command_list
 };
 
-static void onReportCommandHelp (void)
-{
-    if(on_report_command_help)
-        on_report_command_help();
-
-    system_output_help(sdcard_command_list, sizeof(sdcard_command_list) / sizeof(sys_command_t));
-}
-
-sys_commands_t *sdcard_get_commands()
-{
-    return &sdcard_commands;
-}
-
 sdcard_events_t *sdcard_init (void)
 {
     active_stream.type = StreamType_Null;
@@ -823,16 +809,11 @@ sdcard_events_t *sdcard_init (void)
     driver_reset = hal.driver_reset;
     hal.driver_reset = sdcard_reset;
 
-    sdcard_commands.on_get_commands = grbl.on_get_commands;
-    grbl.on_get_commands = sdcard_get_commands;
-
-    on_report_command_help = grbl.on_report_command_help;
-    grbl.on_report_command_help = onReportCommandHelp;
-
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = onReportOptions;
 
     errors_register(&error_details);
+    system_register_commands(&sdcard_commands);
 
 #if SDCARD_ENABLE == 2 && FF_FS_READONLY == 0
     if(hal.stream.write_char != NULL)
@@ -842,7 +823,7 @@ sdcard_events_t *sdcard_init (void)
     fs_macros_init();
 
     if(settings.fs_options.sd_mount_on_boot)
-        protocol_enqueue_rt_command(sdcard_auto_mount);
+        protocol_enqueue_foreground_task(sdcard_auto_mount, NULL);
 
     return &sdcard;
 }

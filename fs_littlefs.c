@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022-2023 Terje Io
+  Copyright (c) 2022-2024 Terje Io
  
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -295,11 +295,6 @@ static int fs_format (void)
     return ret;
 }
 
-static void fs_mount_failed (uint_fast16_t state)
-{
-    report_message("LittleFs mount failed!", Message_Warning);
-}
-
 void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 {
     static const vfs_t littlefs = {
@@ -337,7 +332,7 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
         mode.hidden = settings.fs_options.lfs_hidden;
         hal.driver_cap.littlefs = vfs_mount(path, &littlefs, mode);
     } else
-        protocol_enqueue_rt_command(fs_mount_failed);
+        protocol_enqueue_foreground_task(report_warning, "LittleFS mount failed!");
 }
 
 #endif // LITTLEFS_ENABLE

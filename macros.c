@@ -3,7 +3,7 @@
 
   Part of grblHAL SD card plugins
 
-  Copyright (c) 2023 Terje Io
+  Copyright (c) 2023-2024 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -320,7 +320,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.06]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.07]" ASCII_EOL);
 }
 
 void fs_macros_init (void)
@@ -336,11 +336,11 @@ void fs_macros_init (void)
 
 #if NGC_EXPRESSIONS_ENABLE
 
-    on_vfs_mount = grbl.on_vfs_mount;
-    grbl.on_vfs_mount = atc_macros_attach;
+    on_vfs_mount = vfs.on_mount;
+    vfs.on_mount = atc_macros_attach;
 
-    on_vfs_unmount = grbl.on_vfs_unmount;
-    grbl.on_vfs_unmount = atc_macros_detach;
+    on_vfs_unmount = vfs.on_unmount;
+    vfs.on_unmount = atc_macros_detach;
 
 #endif
 }
