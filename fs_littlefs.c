@@ -181,7 +181,7 @@ static int fs_chdir (const char *path)
     return -1;
 #endif
 }
-
+/*
 static char *fs_getcwd (char *buf, size_t size)
 {
     static char cwd[255];
@@ -203,7 +203,7 @@ static char *fs_getcwd (char *buf, size_t size)
 
     return cwd;
 }
-
+*/
 static vfs_dir_t *fs_opendir (const char *path)
 {
     vfs_dir_t *dir = malloc(sizeof(vfs_dir_t) + sizeof(lfs_dir_t));
