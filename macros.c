@@ -5,18 +5,18 @@
 
   Copyright (c) 2023-2024 Terje Io
 
-  Grbl is free software: you can redistribute it and/or modify
+  grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Grbl is distributed in the hope that it will be useful,
+  grblHAL is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #ifdef ARDUINO
@@ -33,6 +33,7 @@
 #include "grbl/hal.h"
 #include "grbl/state_machine.h"
 #include "grbl/tool_change.h"
+#include "grbl/ngc_flowctrl.h"
 
 #ifndef MACRO_STACK_DEPTH
 #define MACRO_STACK_DEPTH 1 // for now
@@ -70,6 +71,7 @@ static void end_macro (void)
     if(stack_idx >= 0) {
         if(macro[stack_idx].file) {
             vfs_close(macro[stack_idx].file);
+            ngc_flowctrl_unwind_stack(macro[stack_idx].file);
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
