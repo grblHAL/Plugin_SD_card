@@ -71,7 +71,9 @@ static void end_macro (void)
     if(stack_idx >= 0) {
         if(macro[stack_idx].file) {
             vfs_close(macro[stack_idx].file);
+#if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
+#endif
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
