@@ -180,11 +180,39 @@ static void macro_start (vfs_file_t *file, macro_id_t macro_id)
     hal.stream.file = file;
 }
 
+static void macro_get_setting (void)
+{
+    float setting_id;
+    const setting_detail_t *setting;
+
+    if(ngc_param_get(17 /* Q word */, &setting_id) && (setting = setting_get_details((setting_id_t)setting_id, NULL))) {
+
+        uint_fast8_t offset;
+
+        settings_get_axis_base((setting_id_t)setting_id, &offset);
+
+        if(setting->datatype == Format_Decimal) {
+            ngc_named_param_set("_value", setting_get_float_value(setting, offset));
+            ngc_named_param_set("_value_returned", 1.0f);
+        } else if(setting_is_integer(setting) || setting_is_list(setting)) {
+            ngc_named_param_set("_value", (float)setting_get_int_value(setting, offset));
+            ngc_named_param_set("_value_returned", 1.0f);
+        } else
+            ngc_named_param_set("_value_returned", 0.0f);
+    } else
+        ngc_named_param_set("_value_returned", 0.0f);
+}
+
 static status_code_t macro_execute (macro_id_t macro_id)
 {
     bool ok = false;
 
-    if(stack_idx < (MACRO_STACK_DEPTH - 1) && macro_id >= 100 && state_get() == STATE_IDLE) {
+    if(macro_id < 100) {
+
+        if((ok = (macro_id == 1)))
+            macro_get_setting();
+
+    } else if(stack_idx < (MACRO_STACK_DEPTH - 1) && state_get() == STATE_IDLE) {
 
         char filename[32];
         vfs_file_t *file;
