@@ -180,6 +180,8 @@ static void macro_start (vfs_file_t *file, macro_id_t macro_id)
     hal.stream.file = file;
 }
 
+#if NGC_PARAMETERS_ENABLE
+
 static void macro_get_setting (void)
 {
     float setting_id;
@@ -197,21 +199,41 @@ static void macro_get_setting (void)
         } else if(setting_is_integer(setting) || setting_is_list(setting)) {
             ngc_named_param_set("_value", (float)setting_get_int_value(setting, offset));
             ngc_named_param_set("_value_returned", 1.0f);
-        } else
-            ngc_named_param_set("_value_returned", 0.0f);
-    } else
-        ngc_named_param_set("_value_returned", 0.0f);
+        }
+    }
 }
+
+#endif
+
+#if N_TOOLS
+
+static void macro_get_tool_offset (void)
+{
+    float tool_id, axis_id;
+
+    if(ngc_param_get(17 /* Q word */, &tool_id) && ngc_param_get(18 /* R word */, &axis_id)) {
+        if((uint32_t)tool_id <= grbl.tool_table.n_tools && (uint8_t)axis_id < N_AXIS) {
+            ngc_named_param_set("_value", grbl.tool_table.tool[(uint32_t)tool_id].offset[(uint8_t)axis_id]);
+            ngc_named_param_set("_value_returned", 1.0f);
+        }
+    }
+}
+
+#endif
 
 static status_code_t macro_execute (macro_id_t macro_id)
 {
     bool ok = false;
 
     if(macro_id < 100) {
-
-        if((ok = (macro_id == 1)))
+#if NGC_PARAMETERS_ENABLE
+        if((ok = (macro_id == 1))) // TODO: add enum or defines?
             macro_get_setting();
-
+#endif
+#if N_TOOLS
+        if(!ok && (ok = (macro_id == 2)))
+            macro_get_tool_offset();
+#endif
     } else if(stack_idx < (MACRO_STACK_DEPTH - 1) && state_get() == STATE_IDLE) {
 
         char filename[32];
@@ -352,7 +374,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.07]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:FS macro plugin v0.08]" ASCII_EOL);
 }
 
 void fs_macros_init (void)
