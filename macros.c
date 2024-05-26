@@ -74,6 +74,7 @@ static void end_macro (void)
 #if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
 #endif
+            ngc_call_pop();
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
