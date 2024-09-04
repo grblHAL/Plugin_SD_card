@@ -68,6 +68,7 @@ char const *const filetypes[] = {
     "txt",
     "text",
     "tap",
+    "macro",
     ""
 };
 

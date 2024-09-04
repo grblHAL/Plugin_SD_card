@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022-2023 Terje Io
+  Copyright (c) 2022-2024 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -228,7 +228,7 @@ static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
     if(!strcmp(fi.fname, "System Volume Information") && ((vfs_errno = f_readdir((FF_DIR *)&dir->handle, &fi)) != FR_OK || *fi.fname == '\0'))
         return NULL;
 
-    if(fi.fname && *fi.fname != '\0')
+    if(*fi.fname != '\0')
         strcpy(dirent->name, fi.fname);
 
     dirent->size = fi.fsize;
