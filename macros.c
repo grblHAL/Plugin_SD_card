@@ -183,11 +183,15 @@ static void macro_start (vfs_file_t *file, macro_id_t macro_id)
 
 #if NGC_PARAMETERS_ENABLE
 
-static void macro_get_setting (void)
+static status_code_t macro_get_setting (void)
 {
     float setting_id;
+    status_code_t status = Status_OK;
     const setting_detail_t *setting;
+    parameter_words_t args = gc_get_g65_arguments();
 
+    if(!args.q)
+        status = Status_GcodeValueWordMissing;
     if(ngc_param_get(17 /* Q word */, &setting_id) && (setting = setting_get_details((setting_id_t)setting_id, NULL))) {
 
         uint_fast8_t offset;
@@ -201,40 +205,87 @@ static void macro_get_setting (void)
             ngc_named_param_set("_value", (float)setting_get_int_value(setting, offset));
             ngc_named_param_set("_value_returned", 1.0f);
         }
-    }
+    } else
+        status = Status_GcodeValueOutOfRange;
+
+    return status;
+}
+
+static status_code_t macro_ngc_parameter_rw (void)
+{
+    float idx, value;
+    status_code_t status = Status_OK;
+    parameter_words_t args = gc_get_g65_arguments();
+
+    if(!args.i)
+        status = Status_GcodeValueWordMissing;
+    else if(ngc_param_get(4 /* I word */, &idx)) {
+        if(args.q) {
+            if(!(ngc_param_get(17 /* Q word */, &value) && ngc_param_set((ngc_param_id_t)idx, value)))
+                status = Status_GcodeValueOutOfRange;
+        } else if(ngc_param_get((ngc_param_id_t)idx, &value)) {
+            if(args.s) {
+                if(!(ngc_param_get(19 /* S word */, &idx) && ngc_param_set((ngc_param_id_t)idx, value)))
+                    status = Status_GcodeValueOutOfRange;
+            } else {
+                ngc_named_param_set("_value", value);
+                ngc_named_param_set("_value_returned", 1.0f);
+            }
+        } else
+            status = Status_GcodeValueOutOfRange;
+    } else
+        status = Status_GcodeValueOutOfRange;
+
+    return status;
 }
 
 #endif
 
 #if N_TOOLS
 
-static void macro_get_tool_offset (void)
+static status_code_t macro_get_tool_offset (void)
 {
     float tool_id, axis_id;
+    status_code_t status = Status_OK;
+    parameter_words_t args = gc_get_g65_arguments();
 
-    if(ngc_param_get(17 /* Q word */, &tool_id) && ngc_param_get(18 /* R word */, &axis_id)) {
+    if(!(args.q && args.r))
+        status = Status_GcodeValueWordMissing;
+    else if(ngc_param_get(17 /* Q word */, &tool_id) && ngc_param_get(18 /* R word */, &axis_id)) {
         if((uint32_t)tool_id <= grbl.tool_table.n_tools && (uint8_t)axis_id < N_AXIS) {
             ngc_named_param_set("_value", grbl.tool_table.tool[(uint32_t)tool_id].offset[(uint8_t)axis_id]);
             ngc_named_param_set("_value_returned", 1.0f);
-        }
-    }
+        } else
+            status = Status_GcodeIllegalToolTableEntry;
+    } else
+        status = Status_GcodeIllegalToolTableEntry;
+
+    return status;
 }
 
 #endif
 
 static status_code_t macro_execute (macro_id_t macro_id)
 {
-    bool ok = false;
+    status_code_t status = Status_Unhandled;
 
     if(macro_id < 100) {
+        switch(macro_id) { // TODO: add enum or defines?
 #if NGC_PARAMETERS_ENABLE
-        if((ok = (macro_id == 1))) // TODO: add enum or defines?
-            macro_get_setting();
+            case 1:
+                status = macro_get_setting();
+                break;
+
+            case 3:
+                status = macro_ngc_parameter_rw();
+                break;
 #endif
 #if N_TOOLS
-        if(!ok && (ok = (macro_id == 2)))
-            macro_get_tool_offset();
+            case 2:
+                status = macro_get_tool_offset();
+                break;
 #endif
+        }
     } else if(stack_idx < (MACRO_STACK_DEPTH - 1) && state_get() == STATE_IDLE) {
 
         char filename[32];
@@ -251,11 +302,13 @@ static status_code_t macro_execute (macro_id_t macro_id)
             file = vfs_open(filename, "r");
         }
 
-        if((ok = !!file))
+        if(!!file) {
             macro_start(file, macro_id);
+            status = Status_OK;
+        }
     }
 
-    return ok ? Status_OK : (on_macro_execute ? on_macro_execute(macro_id) : Status_Unhandled);
+    return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id) : status;
 }
 
 #if NGC_EXPRESSIONS_ENABLE
