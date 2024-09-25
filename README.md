@@ -10,7 +10,7 @@ Mount card as the root \(/\) file system.
 
 `$F`
 
-List files on the card recursively. Only CNC related filetypes are listed: _.nc_, _.ncc_, _.ngc_, _.cnc_, _.gcode_, _.txt_, _.text_, .tap_ and _.macro_.
+List files on the card recursively. Only CNC related filetypes are listed: _.nc_, _.ncc_, _.ngc_, _.cnc_, _.gcode_, _.txt_, _.text_, _.tap_ and _.macro_.
 
 `$F+`
 
