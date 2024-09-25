@@ -55,7 +55,7 @@ To write files to littlefs either use the WebUI maintenance page (`forcefallback
 
 #### Macros
 
-The macros plugin is handling `G65` calls by either redirecting the input stream to the file containg the macro or
+The macros plugin is handling `G65` calls by either redirecting the input stream to the file containing the macro or
 executing an [inbuilt macro](https://github.com/grblHAL/core/wiki/Expressions-and-flow-control#inbuilt-g65-macros).  
 
 Syntax is `G65P<n>` where `<n>` is the macro number.  
@@ -66,13 +66,13 @@ If `<n>` is < 100 it is considered to be an inbuilt macro of which [a few](https
 can be passed to macros if [expression](https://github.com/grblHAL/core/wiki/Expressions-and-flow-control#inbuilt-g65-macros) support is enabled.
 
 If the macro `/littlefs/tc.macro` or `/tc.macro` is present then the plugin will attach itself to the tool change HAL functions.
-`tc.macro` will then be called when a `M6` command is executed.
+`tc.macro` will then be called when a `M6` command is executed.  
 If `/littlefs/ts.macro` or `/ts.macro` is also present it will be called when a `T` command is executed,
 this can be used to preposition a tool carousel or whatever else is needed to prepare for a tool change.
 
 Similarly if `/littlefs/ps.macro` or `/ps.macro` is present it will be called when a `M30` or a `M60` \(pallet shuttle\) command is executed.
 
-`tc.macro` and `ts.macro` can be used to add support for automatic tool changers \(ATCs\), [this discussion](https://github.com/grblHAL/core/discussions/577) contains examples and ideas for of how to.
+`tc.macro` and `ts.macro` can be used to add support for automatic tool changers \(ATCs\), [this discussion](https://github.com/grblHAL/core/discussions/577) contains examples and ideas for how to.
 
 ---
 2024-09-25
