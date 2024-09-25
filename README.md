@@ -6,7 +6,7 @@ The SD card plugin adds a few `$` commands for listing files and running G-code 
 
 `$FM`
 
-Mount card as the root \(/\) file system.
+Mount card as the root \(/\) directory.
 
 `$F`
 
@@ -63,7 +63,7 @@ If `<n>` is >= 100 `/littlefs/P<n>.macro`, or `/P<n>.macro` if not present in li
 If `<n>` is < 100 it is considered to be an inbuilt macro of which [a few](https://github.com/grblHAL/core/wiki/Expressions-and-flow-control#inbuilt-g65-macros) are currently implemented.
 
 [Parameters](https://github.com/grblHAL/core/wiki/Expressions-and-flow-control#numbered-parameters-passed-as-arguments-to-g65-macro-call)
-can be passed to macros if [expression](https://github.com/grblHAL/core/wiki/Expressions-and-flow-control#inbuilt-g65-macros) support is enabled.
+can be passed to macros if [expression](https://github.com/grblHAL/core/wiki/Expressions-and-flow-control) support is enabled.
 
 If the macro `/littlefs/tc.macro` or `/tc.macro` is present then the plugin will attach itself to the tool change HAL functions.
 `tc.macro` will then be called when a `M6` command is executed.  
