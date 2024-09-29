@@ -239,8 +239,6 @@ static status_code_t macro_ngc_parameter_rw (void)
     return status;
 }
 
-#endif
-
 #if N_TOOLS
 
 static status_code_t macro_get_tool_offset (void)
@@ -263,7 +261,9 @@ static status_code_t macro_get_tool_offset (void)
     return status;
 }
 
-#endif
+#endif // N_TOOLS
+
+#endif // NGC_PARAMETERS_ENABLE
 
 static status_code_t macro_execute (macro_id_t macro_id)
 {
@@ -279,11 +279,11 @@ static status_code_t macro_execute (macro_id_t macro_id)
             case 3:
                 status = macro_ngc_parameter_rw();
                 break;
-#endif
-#if N_TOOLS
+  #if N_TOOLS
             case 2:
                 status = macro_get_tool_offset();
                 break;
+  #endif
 #endif
         }
     } else if(stack_idx < (MACRO_STACK_DEPTH - 1) && state_get() == STATE_IDLE) {
@@ -304,7 +304,7 @@ static status_code_t macro_execute (macro_id_t macro_id)
 
         if(!!file) {
             macro_start(file, macro_id);
-            status = Status_OK;
+            status = Status_Handled;
         }
     }
 
@@ -428,7 +428,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:FS macro plugin v0.08]" ASCII_EOL);
+        report_plugin("FS macro plugin", "0.09");
 }
 
 void fs_macros_init (void)
