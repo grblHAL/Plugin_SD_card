@@ -5,18 +5,18 @@
 
   Copyright (c) 2018-2024 Terje Io
 
-  Grbl is free software: you can redistribute it and/or modify
+  grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Grbl is distributed in the hope that it will be useful,
+  grblHAL is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "sdcard.h"
@@ -375,6 +375,8 @@ static void sdcard_end_job (bool flush)
     hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // real time command handling and
     if(grbl.report.status_message == trap_status_messages)          // ...
         grbl.report.status_message = status_message;                // normal status message handling.
+    else
+        report_init_fns();
 
     status_message = NULL;
 
@@ -403,7 +405,7 @@ static int16_t sdcard_read (void)
         if(state == STATE_IDLE || (state & (STATE_CYCLE|STATE_HOLD|STATE_CHECK_MODE|STATE_TOOL_CHANGE)))
             c = file_read();
 
-        if(c == -1) { // EOF or error reading or grbl problem
+        if(c == -1) { // EOF or error reading or grblHAL problem
             file_close();
             if(file.eol == 0) // Return newline if line was incorrectly terminated
                 c = '\n';
@@ -459,10 +461,8 @@ static status_code_t trap_status_messages (status_code_t status_code)
         sprintf(buf, "error:%d in SD file at line " UINT32FMT ASCII_EOL, (uint8_t)status_code, file.line);
         hal.stream.write(buf);
 
-        if(grbl.report.status_message == trap_status_messages && (grbl.report.status_message = status_message))
-            grbl.report.status_message(status_code);
-
         sdcard_end_job(true);
+        grbl.report.status_message(status_code);
     }
 
     return status_code;
@@ -778,7 +778,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.13]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:SDCARD v1.14]" ASCII_EOL);
 }
 
 const sys_command_t sdcard_command_list[] = {

@@ -34,9 +34,10 @@
 #include "grbl/state_machine.h"
 #include "grbl/tool_change.h"
 #include "grbl/ngc_flowctrl.h"
+#include "grbl/stream_file.h"
 
 #ifndef MACRO_STACK_DEPTH
-#define MACRO_STACK_DEPTH 1 // for now
+#define MACRO_STACK_DEPTH 5
 #endif
 
 typedef struct {
@@ -50,12 +51,7 @@ static macro_stack_entry_t macro[MACRO_STACK_DEPTH] = {0};
 static on_report_options_ptr on_report_options;
 static on_macro_execute_ptr on_macro_execute;
 static on_macro_return_ptr on_macro_return = NULL;
-static status_message_ptr status_message = NULL;
 static driver_reset_ptr driver_reset;
-static io_stream_t active_stream;
-
-static int16_t file_read (void);
-static status_code_t trap_status_messages (status_code_t status_code);
 
 #if NGC_EXPRESSIONS_ENABLE
 static on_vfs_mount_ptr on_vfs_mount;
@@ -70,7 +66,7 @@ static void end_macro (void)
 {
     if(stack_idx >= 0) {
         if(macro[stack_idx].file) {
-            vfs_close(macro[stack_idx].file);
+            stream_redirect_close(macro[stack_idx].file);
 #if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
 #endif
@@ -78,21 +74,11 @@ static void end_macro (void)
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
-        hal.stream.file = stack_idx >= 0 ? macro[stack_idx].file : NULL;
     }
 
     if(stack_idx == -1) {
-
-        if(hal.stream.read == file_read)
-            memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));
-
         grbl.on_macro_return = on_macro_return;
         on_macro_return = NULL;
-
-        if(grbl.report.status_message == trap_status_messages)
-            grbl.report.status_message = status_message;
-
-        status_message = NULL;
     }
 }
 
@@ -105,80 +91,56 @@ static void plugin_reset (void)
     driver_reset();
 }
 
-// Macro stream input function.
-// Reads character by character from the macro and returns them when
-// requested by the foreground process.
-static int16_t file_read (void)
+static status_code_t onError (status_code_t status_code)
 {
-    static bool eol_ok = false;
-
-    char c;
-
-    if(vfs_read(&c, 1, 1, macro[stack_idx].file) == 1) {
-        if(c == ASCII_CR || c == ASCII_LF) {
-            if(eol_ok)
-                return SERIAL_NO_DATA;
-            eol_ok = true;
-        } else
-            eol_ok = false;
-    } else if(eol_ok) {
-        if(status_message)
-            status_message(gc_state.last_error);
-        end_macro();            // Done
-        return SERIAL_NO_DATA;  // ...
-    } else {
-        eol_ok = true;
-        return ASCII_LF;        // Return a linefeed if the last character was not a linefeed.
-    }
-
-    return (int16_t)c;
-}
-
-// This code will be executed after each command is sent to the parser,
-// If an error is detected macro execution will be stopped and the status_code reported.
-static status_code_t trap_status_messages (status_code_t status_code)
-{
-    gc_state.last_error = status_code;
-
-    if(hal.stream.read != file_read)
-        status_code = status_message(status_code);
-
-    else if(!(status_code == Status_OK || status_code == Status_Unhandled)) {
+    if(stack_idx >= 0) {
 
         char msg[40];
         sprintf(msg, "error %d in macro P%d.macro", (uint8_t)status_code, macro[stack_idx].id);
         report_message(msg, Message_Warning);
 
-        if(grbl.report.status_message == trap_status_messages && (grbl.report.status_message = status_message))
-            status_code = grbl.report.status_message(status_code);
-
-        while(stack_idx >= 0)
-            end_macro();
+        end_macro();
+        grbl.report.status_message(status_code);
     }
 
     return status_code;
 }
 
-static void macro_start (vfs_file_t *file, macro_id_t macro_id)
+static status_code_t onFileEnd (vfs_file_t *file, status_code_t status)
 {
-    stack_idx++;
-    macro[stack_idx].file = file;
-    macro[stack_idx].id = macro_id;
+    if(stack_idx >= 0 && macro[stack_idx].file == file) {
+        if(status == Status_OK) {
+            end_macro();
+            grbl.report.status_message(status);
+        } else {
+            while(stack_idx >= 0)
+                end_macro();
+        }
+    }
 
-    if(hal.stream.read != file_read) {
+    return status;
+}
 
-        memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Redirect input stream to read from the macro instead
-        hal.stream.type = StreamType_File;                          // from the active stream.
-        hal.stream.read = file_read;                                // This ensures that input streams are not mingled.
+static bool macro_start (char *filename, macro_id_t macro_id)
+{
+    vfs_file_t *file;
 
-        status_message = grbl.report.status_message;                // Add trap for status messages
-        grbl.report.status_message = trap_status_messages;          // so we can terminate on errors.
+    if(stack_idx >= (MACRO_STACK_DEPTH - 1))
+        return false;
 
+    if((file = stream_redirect_read(filename, onError, onFileEnd)) == NULL)
+        return false;
+
+    if(stack_idx == -1) {
         on_macro_return = grbl.on_macro_return;
         grbl.on_macro_return = end_macro;
     }
 
-    hal.stream.file = file;
+    stack_idx++;
+    macro[stack_idx].file = file;
+    macro[stack_idx].id = macro_id;
+
+    return true;
 }
 
 #if NGC_PARAMETERS_ENABLE
@@ -288,24 +250,22 @@ static status_code_t macro_execute (macro_id_t macro_id)
         }
     } else if(stack_idx < (MACRO_STACK_DEPTH - 1) && state_get() == STATE_IDLE) {
 
+        bool ok;
         char filename[32];
-        vfs_file_t *file;
 
 #if LITTLEFS_ENABLE
         sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-        if((file = vfs_open(filename, "r")) == NULL)
+        if(!(ok = macro_start(filename, macro_id)))
 #endif
         {
             sprintf(filename, "/P%d.macro", macro_id);
 
-            file = vfs_open(filename, "r");
+            ok = macro_start(filename, macro_id);
         }
 
-        if(!!file) {
-            macro_start(file, macro_id);
+        if(ok)
             status = Status_Handled;
-        }
     }
 
     return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id) : status;
@@ -316,16 +276,14 @@ static status_code_t macro_execute (macro_id_t macro_id)
 // Set next and/or current tool. Called by gcode.c on on a Tn or M61 command (via HAL).
 static void tool_select (tool_data_t *tool, bool next)
 {
-    vfs_file_t *file;
     char filename[30];
 
-    if(tool->tool_id > 0 && (file = vfs_open(strcat(strcpy(filename, tc_path), "ts.macro"), "r")))
-        macro_start(file, 98);
+    if(tool->tool_id > 0)
+        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98);
 }
 
 static status_code_t tool_change (parser_state_t *parser_state)
 {
-    vfs_file_t *file;
     char filename[30];
     int32_t current_tool = (int32_t)ngc_named_param_get_by_id(NGCParam_current_tool),
             next_tool =  (int32_t)ngc_named_param_get_by_id(NGCParam_selected_tool);
@@ -336,9 +294,7 @@ static status_code_t tool_change (parser_state_t *parser_state)
     if(current_tool == next_tool || next_tool == 0)
         return Status_OK;
 
-    if((file = vfs_open(strcat(strcpy(filename, tc_path), "tc.macro"), "r")))
-        macro_start(file, 99);
-    else
+    if(!macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99))
         return Status_GCodeToolError;
 
     return Status_Unhandled;
@@ -347,11 +303,9 @@ static status_code_t tool_change (parser_state_t *parser_state)
 // Perform a pallet shuttle.
 static void pallet_shuttle (void)
 {
-    vfs_file_t *file;
     char filename[30];
 
-    if((file = vfs_open(strcat(strcpy(filename, tc_path), "ps.macro"), "r")))
-        macro_start(file, 97);
+    macro_start(strcat(strcpy(filename, tc_path), "ps.macro"), 97);
 
     if(on_pallet_shuttle)
         on_pallet_shuttle();
@@ -428,7 +382,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.09");
+        report_plugin("FS macro plugin", "0.10");
 }
 
 void fs_macros_init (void)
