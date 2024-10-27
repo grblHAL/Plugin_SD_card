@@ -156,9 +156,7 @@ static status_code_t macro_get_setting (void)
         status = Status_GcodeValueWordMissing;
     if(ngc_param_get(17 /* Q word */, &setting_id) && (setting = setting_get_details((setting_id_t)setting_id, NULL))) {
 
-        uint_fast8_t offset;
-
-        settings_get_axis_base((setting_id_t)setting_id, &offset);
+        uint_fast8_t offset = (setting_id_t)setting_id - setting->id;
 
         if(setting->datatype == Format_Decimal) {
             ngc_named_param_set("_value", setting_get_float_value(setting, offset));
@@ -382,7 +380,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.10");
+        report_plugin("FS macro plugin", "0.11");
 }
 
 void fs_macros_init (void)
