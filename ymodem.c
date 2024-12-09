@@ -33,8 +33,10 @@
 #include <string.h>
 
 #ifdef ARDUINO
+#include "../grbl/crc.h"
 #include "../grbl/vfs.h"
 #else
+#include "grbl/crc.h"
 #include "grbl/vfs.h"
 #endif
 
@@ -83,23 +85,6 @@ static ymodem_status_t await_packetnum (uint8_t c);
 static ymodem_status_t get_payload (uint8_t c);
 static ymodem_status_t await_crc (uint8_t c);
 static ymodem_status_t await_eot (uint8_t c);
-
-// Fast CRC16 implementation
-// Original Code: Ashley Roll
-// Optimisations: Scott Dattalo
-// From http://www.ccsinfo.com/forum/viewtopic.php?t=24977
-static uint16_t crc16 (const uint8_t *buf, uint16_t len)
-{
-    uint16_t x, crc = 0;
-
-    while(len--) {
-        x = (crc >> 8) ^ *buf++;
-        x ^= x >> 4;
-        crc = (crc << 8) ^ (x << 12) ^ (x << 5) ^ x;
-    }
-
-    return crc;
-}
 
 // End transfer handler.
 static void end_transfer (bool send_ack)
@@ -201,11 +186,11 @@ static ymodem_status_t await_crc (uint8_t c)
         ymodem.crc = c;
     } else {
 
-        ymodem.process = await_soh;                                                  // Set active handler to wait for next packet
+        ymodem.process = await_soh;                                                         // Set active handler to wait for next packet
         ymodem.crc = (ymodem.crc << 8) | c;
 
-        if(crc16((const uint8_t *)&ymodem.payload, ymodem.packet_len) != ymodem.crc) // If CRC invalid
-            return YModem_Purge;                                                     // purge input stream and return NAK.
+        if(ccitt_crc16((const uint8_t *)&ymodem.payload, ymodem.packet_len) != ymodem.crc)  // If CRC invalid
+            return YModem_Purge;                                                            // purge input stream and return NAK.
 
         if(ymodem.packet_num == 0 && *ymodem.filename == 0) { // Open file or end transfer
 

@@ -91,7 +91,7 @@ static void plugin_reset (void)
     driver_reset();
 }
 
-static status_code_t onError (status_code_t status_code)
+static status_code_t onG65MacroError (status_code_t status_code)
 {
     if(stack_idx >= 0) {
 
@@ -106,7 +106,7 @@ static status_code_t onError (status_code_t status_code)
     return status_code;
 }
 
-static status_code_t onFileEnd (vfs_file_t *file, status_code_t status)
+static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
 {
     if(stack_idx >= 0 && macro[stack_idx].file == file) {
         if(status == Status_OK) {
@@ -128,7 +128,7 @@ static bool macro_start (char *filename, macro_id_t macro_id)
     if(stack_idx >= (MACRO_STACK_DEPTH - 1))
         return false;
 
-    if((file = stream_redirect_read(filename, onError, onFileEnd)) == NULL)
+    if((file = stream_redirect_read(filename, onG65MacroError, onG65MacroEOF)) == NULL)
         return false;
 
     if(stack_idx == -1) {
