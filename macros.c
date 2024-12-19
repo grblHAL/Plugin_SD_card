@@ -251,7 +251,7 @@ static status_code_t macro_execute (macro_id_t macro_id)
         bool ok;
         char filename[32];
 
-#if LITTLEFS_ENABLE
+#if LITTLEFS_ENABLE == 1
         sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
         if(!(ok = macro_start(filename, macro_id)))
@@ -380,7 +380,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.11");
+        report_plugin("FS macro plugin", "0.12");
 }
 
 void fs_macros_init (void)

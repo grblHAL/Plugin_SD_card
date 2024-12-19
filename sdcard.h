@@ -67,7 +67,7 @@ typedef struct
 } sdcard_job_t;
 
 sdcard_events_t *sdcard_init (void);
-bool sdcard_busy (void);
+bool sdcard_busy (void); // Deprecated, use stream_is_file() instead.
 FATFS *sdcard_getfs (void);
 sdcard_job_t *sdcard_get_job_info (void);
 status_code_t stream_file (sys_state_t state, char *fname);

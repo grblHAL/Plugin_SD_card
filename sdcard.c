@@ -778,7 +778,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        hal.stream.write("[PLUGIN:SDCARD v1.14]" ASCII_EOL);
+        report_plugin("SDCARD", "1.15");
 }
 
 const sys_command_t sdcard_command_list[] = {
@@ -831,21 +831,21 @@ sdcard_events_t *sdcard_init (void)
 
 bool sdcard_busy (void)
 {
-    return hal.stream.type == StreamType_File;
+    return stream_is_file();
 }
 
 sdcard_job_t *sdcard_get_job_info (void)
 {
     static sdcard_job_t job;
 
-    if(sdcard_busy()) {
+    if(stream_is_file()) {
         strcpy(job.name, file.name);
         job.size = file.size;
         job.pos = file.pos;
         job.line = file.line;
     }
 
-    return sdcard_busy() ? &job : NULL;
+    return stream_is_file() ? &job : NULL;
 }
 
 FATFS *sdcard_getfs (void)
