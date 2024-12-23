@@ -57,6 +57,7 @@ typedef struct time_file {
 } time_file_t;
 
 static lfs_t lfs = {0};
+static bool is_rootfs;
 static const struct lfs_config *lfs_config;
 
 static vfs_file_t *fs_open (const char *filename, const char *mode)
@@ -178,7 +179,7 @@ static int fs_chdir (const char *path)
 #if FF_FS_RPATH
     return f_chdir(path);
 #else
-    return -1;
+    return is_rootfs && !strcmp(path, "/") ? 0 : -1;
 #endif
 }
 /*
@@ -330,6 +331,7 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
     if (lfs_mount(&lfs, config) == LFS_ERR_OK) {
         vfs_st_mode_t mode = {0};
         mode.hidden = settings.fs_options.lfs_hidden;
+        is_rootfs = !strcmp(path, "/");
         hal.driver_cap.littlefs = vfs_mount(path, &littlefs, mode);
     } else
         protocol_enqueue_foreground_task(report_warning, "LittleFS mount failed!");

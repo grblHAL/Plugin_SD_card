@@ -37,11 +37,13 @@
   #include "../grbl/report.h"
   #include "../grbl/protocol.h"
   #include "../grbl/state_machine.h"
+  #include "../grbl/stream_file.h"
   #include "../grbl/vfs.h"
 #else
   #include "grbl/report.h"
   #include "grbl/protocol.h"
   #include "grbl/state_machine.h"
+  #include "grbl/stream_file.h"
   #include "grbl/vfs.h"
 #endif
 
@@ -352,7 +354,7 @@ static status_code_t sdcard_ls (bool filtered)
 {
     char path[MAX_PATHLEN] = "", name[BUFLEN]; // NB! also used as work area when recursing directories
 
-    return scan_dir(path, 10, name, filtered) == FR_OK ? Status_OK : Status_SDFailedOpenDir;
+    return !!file.fs && scan_dir(path, 10, name, filtered) == FR_OK ? Status_OK : Status_SDFailedOpenDir;
 }
 
 static void sdcard_end_job (bool flush)
@@ -701,6 +703,14 @@ static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
     return sdcard_unmount() ? Status_OK : Status_SDMountError;
 }
 
+static void sd_detect (void *mount)
+{
+    if((uint32_t)mount != 0)
+        sdcard_mount();
+    else
+        sdcard_unmount();
+}
+
 static status_code_t sd_cmd_rewind (sys_state_t state, char *args)
 {
     frewind = true;
@@ -767,6 +777,11 @@ static void sdcard_reset (void)
     driver_reset();
 }
 
+ISR_CODE void ISR_FUNC(sdcard_detect)(bool mount)
+{
+    task_add_immediate(sd_detect, (void *)mount);
+}
+
 static void onReportOptions (bool newopt)
 {
     on_report_options(newopt);
@@ -778,31 +793,31 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        report_plugin("SDCARD", "1.15");
+        report_plugin("SDCARD", "1.16");
 }
-
-const sys_command_t sdcard_command_list[] = {
-    {"F", sd_cmd_file_filtered, {}, {
-        .str = "list files on SD card, filtered"
-     ASCII_EOL "$F=<filename> - run SD card file"
-    } },
-    {"F+", sd_cmd_file_all, {}, { .str = "$F+ - list all files on SD card" } },
-    {"FM", sd_cmd_mount, { .noargs = On }, { .str = "mount SD card" } },
-    {"FU", sd_cmd_unmount, { .noargs = On }, { .str = "unmount SD card" } },
-    {"FR", sd_cmd_rewind, { .noargs = On }, { .str = "enable rewind mode for next SD card file to run" } },
-#if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
-    {"FD", sd_cmd_unlink, {}, { .str = "$FD=<filename> - delete SD card file" } },
-#endif
-    {"F<", sd_cmd_to_output, {}, { .str = "$F<=<filename> - dump SD card file to output" } },
-};
-
-static sys_commands_t sdcard_commands = {
-    .n_commands = sizeof(sdcard_command_list) / sizeof(sys_command_t),
-    .commands = sdcard_command_list
-};
 
 sdcard_events_t *sdcard_init (void)
 {
+    static const sys_command_t sdcard_command_list[] = {
+        {"F", sd_cmd_file_filtered, {}, {
+            .str = "list files on SD card, filtered"
+         ASCII_EOL "$F=<filename> - run SD card file"
+        } },
+        {"F+", sd_cmd_file_all, {}, { .str = "$F+ - list all files on SD card" } },
+        {"FM", sd_cmd_mount, { .noargs = On }, { .str = "mount SD card" } },
+        {"FU", sd_cmd_unmount, { .noargs = On }, { .str = "unmount SD card" } },
+        {"FR", sd_cmd_rewind, { .noargs = On }, { .str = "enable rewind mode for next SD card file to run" } },
+    #if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
+        {"FD", sd_cmd_unlink, {}, { .str = "$FD=<filename> - delete SD card file" } },
+    #endif
+        {"F<", sd_cmd_to_output, {}, { .str = "$F<=<filename> - dump SD card file to output" } },
+    };
+
+    static sys_commands_t sdcard_commands = {
+        .n_commands = sizeof(sdcard_command_list) / sizeof(sys_command_t),
+        .commands = sdcard_command_list
+    };
+
     active_stream.type = StreamType_Null;
 
     hal.driver_cap.sd_card = On;
