@@ -52,7 +52,7 @@
 #include "fs_fatfs.h"
 
 #if defined(NEW_FATFS)
-static char *dev = "";
+static char dev[10] = "";
 #endif
 
 // https://e2e.ti.com/support/tools/ccs/f/81/t/428524?Linking-error-unresolved-symbols-rom-h-pinout-c-
@@ -297,10 +297,15 @@ static bool sdcard_mount (void)
 {
     if(sdcard.on_mount) {
 
-        sdcard.on_mount(&file.fs);
+        char *mdev = sdcard.on_mount(&file.fs);
 
-        if(file.fs != NULL)
+        if(file.fs != NULL) {
+#ifdef NEW_FATFS
+            if(mdev)
+                strcpy(dev, mdev);
+#endif
             fs_fatfs_mount("/");
+        }
 
         return file.fs != NULL;
     }
@@ -325,7 +330,7 @@ static bool sdcard_mount (void)
 
 static void sdcard_auto_mount (void *data)
 {
-    if(!sdcard_mount())
+    if(file.fs == NULL && !sdcard_mount())
         report_message("SD card automount failed", Message_Info);
 }
 
@@ -338,7 +343,7 @@ static bool sdcard_unmount (void)
             ok = sdcard.on_unmount(&file.fs);
 #ifdef NEW_FATFS
         else
-            f_mount(file.fs, dev, 0);
+            ok = f_unmount(dev) == FR_OK;
 #endif
         if(ok && file.fs) {
             free(file.fs);
@@ -705,10 +710,10 @@ static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
 
 static void sd_detect (void *mount)
 {
-    if((uint32_t)mount != 0)
-        sdcard_mount();
-    else
+    if((uint32_t)mount == 0)
         sdcard_unmount();
+    else if(file.fs == NULL)
+        sdcard_mount();
 }
 
 static status_code_t sd_cmd_rewind (sys_state_t state, char *args)
@@ -793,7 +798,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        report_plugin("SDCARD", "1.16");
+        report_plugin("SDCARD", "1.17");
 }
 
 sdcard_events_t *sdcard_init (void)
