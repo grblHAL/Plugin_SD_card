@@ -122,7 +122,7 @@ static void sdcard_on_program_completed (program_flow_t program_flow, bool check
 
 PROGMEM static const status_detail_t status_detail[] = {
     { Status_SDMountError, "SD Card mount failed." },
-    { Status_SDReadError, "SD Card file open/read failed." },
+    { Status_SDReadError, "SD Card file delete failed." },
     { Status_SDFailedOpenDir, "SD Card directory listing failed." },
     { Status_SDDirNotFound, "SD Card directory not found." },
     { Status_SDFileEmpty, "SD Card file empty." }
@@ -659,7 +659,7 @@ status_code_t stream_file (sys_state_t state, char *fname)
         } else
             file.handle = NULL;
     } else
-        retval = Status_SDReadError;
+        retval = Status_FileOpenFailed;
 
     return retval;
 }
@@ -745,7 +745,7 @@ static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
             } else
                 file.handle = NULL;
         } else
-            retval = Status_SDReadError;
+            retval = Status_FileOpenFailed;
     }
 
     return retval;
@@ -798,7 +798,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        report_plugin("SDCARD", "1.17");
+        report_plugin("SDCARD", "1.18");
 }
 
 sdcard_events_t *sdcard_init (void)

@@ -121,15 +121,15 @@ static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
     return status;
 }
 
-static bool macro_start (char *filename, macro_id_t macro_id)
+static status_code_t macro_start (char *filename, macro_id_t macro_id)
 {
     vfs_file_t *file;
 
     if(stack_idx >= (MACRO_STACK_DEPTH - 1))
-        return false;
+        return Status_FlowControlStackOverflow;
 
     if((file = stream_redirect_read(filename, onG65MacroError, onG65MacroEOF)) == NULL)
-        return false;
+        return Status_FileOpenFailed;
 
     if(stack_idx == -1) {
         on_macro_return = grbl.on_macro_return;
@@ -140,7 +140,7 @@ static bool macro_start (char *filename, macro_id_t macro_id)
     macro[stack_idx].file = file;
     macro[stack_idx].id = macro_id;
 
-    return true;
+    return Status_Handled;
 }
 
 #if NGC_PARAMETERS_ENABLE
@@ -246,24 +246,26 @@ static status_code_t macro_execute (macro_id_t macro_id)
   #endif
 #endif
         }
-    } else if(stack_idx < (MACRO_STACK_DEPTH - 1) && state_get() == STATE_IDLE) {
+    } else if(stack_idx >= (MACRO_STACK_DEPTH - 1))
+        status = Status_FlowControlStackOverflow;
 
-        bool ok;
+//    else if(state_get() != STATE_IDLE)
+//        status = Status_IdleError;
+
+    else {
+
         char filename[32];
 
 #if LITTLEFS_ENABLE == 1
         sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-        if(!(ok = macro_start(filename, macro_id)))
+        if((status = macro_start(filename, macro_id)) != Status_Handled)
 #endif
         {
             sprintf(filename, "/P%d.macro", macro_id);
 
-            ok = macro_start(filename, macro_id);
+            status = macro_start(filename, macro_id);
         }
-
-        if(ok)
-            status = Status_Handled;
     }
 
     return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id) : status;
@@ -292,10 +294,9 @@ static status_code_t tool_change (parser_state_t *parser_state)
     if(current_tool == next_tool || next_tool == 0)
         return Status_OK;
 
-    if(!macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99))
-        return Status_GCodeToolError;
+    status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99);
 
-    return Status_Unhandled;
+    return status == Status_Handled ? Status_OK : status;
 }
 
 // Perform a pallet shuttle.
@@ -380,7 +381,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.12");
+        report_plugin("FS macro plugin", "0.13");
 }
 
 void fs_macros_init (void)
