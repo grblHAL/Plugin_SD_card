@@ -128,17 +128,26 @@ static status_code_t macro_start (char *filename, macro_id_t macro_id)
     if(stack_idx >= (MACRO_STACK_DEPTH - 1))
         return Status_FlowControlStackOverflow;
 
-    if((file = stream_redirect_read(filename, onG65MacroError, onG65MacroEOF)) == NULL)
-        return Status_FileOpenFailed;
+    if(state_get() == STATE_CHECK_MODE) {
 
-    if(stack_idx == -1) {
-        on_macro_return = grbl.on_macro_return;
-        grbl.on_macro_return = end_macro;
+        vfs_stat_t st;
+
+        return vfs_stat(filename, &st) == 0 ? Status_OK : Status_FileOpenFailed;
+
+    } else {
+
+        if((file = stream_redirect_read(filename, onG65MacroError, onG65MacroEOF)) == NULL)
+            return Status_FileOpenFailed;
+
+        if(stack_idx == -1) {
+            on_macro_return = grbl.on_macro_return;
+            grbl.on_macro_return = end_macro;
+        }
+
+        stack_idx++;
+        macro[stack_idx].file = file;
+        macro[stack_idx].id = macro_id;
     }
-
-    stack_idx++;
-    macro[stack_idx].file = file;
-    macro[stack_idx].id = macro_id;
 
     return Status_Handled;
 }
@@ -199,6 +208,14 @@ static status_code_t macro_ngc_parameter_rw (void)
     return status;
 }
 
+static status_code_t macro_get_machine_state (void)
+{
+    ngc_named_param_set("_value", (float)ffs(state_get()));
+    ngc_named_param_set("_value_returned", 1.0f);
+
+    return Status_OK;
+}
+
 #if N_TOOLS
 
 static status_code_t macro_get_tool_offset (void)
@@ -235,15 +252,18 @@ static status_code_t macro_execute (macro_id_t macro_id)
             case 1:
                 status = macro_get_setting();
                 break;
-
-            case 3:
-                status = macro_ngc_parameter_rw();
-                break;
   #if N_TOOLS
-            case 2:
+           case 2:
                 status = macro_get_tool_offset();
                 break;
   #endif
+            case 3:
+                status = macro_ngc_parameter_rw();
+                break;
+
+            case 4:
+                status = macro_get_machine_state();
+                break;
 #endif
         }
     } else if(stack_idx >= (MACRO_STACK_DEPTH - 1))
@@ -381,7 +401,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.13");
+        report_plugin("FS macro plugin", "0.14");
 }
 
 void fs_macros_init (void)
