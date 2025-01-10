@@ -8,20 +8,20 @@
   NOTE: Receiver only, does not send initial 'C' to start transfer.
         Start transfer by sending SOH or STX.
 
-  Copyright (c) 2021-2022 Terje Io
+  Copyright (c) 2021-2025 Terje Io
 
-  Grbl is free software: you can redistribute it and/or modify
+  grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Grbl is distributed in the hope that it will be useful,
+  grblHAL is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
 
@@ -73,11 +73,11 @@ typedef struct {
 } ymodem_t;
 
 static ymodem_t ymodem;
+static stream_rx_buffer_t rx_buffer;
 
 static driver_reset_ptr driver_reset;
 static on_execute_realtime_ptr on_execute_realtime;
 static on_unknown_realtime_cmd_ptr on_unknown_realtime_cmd;
-static io_stream_t active_stream;
 static enqueue_realtime_command_ptr rt_handler;
 
 static ymodem_status_t await_soh (uint8_t c);
@@ -86,18 +86,44 @@ static ymodem_status_t get_payload (uint8_t c);
 static ymodem_status_t await_crc (uint8_t c);
 static ymodem_status_t await_eot (uint8_t c);
 
+static int16_t get_char (void)
+{
+    uint_fast16_t tail = rx_buffer.tail;
+
+    if(tail == rx_buffer.head)
+        return SERIAL_NO_DATA;
+
+    char data = rx_buffer.data[tail];
+    rx_buffer.tail = BUFNEXT(tail, rx_buffer);
+
+    return (int16_t)data;
+}
+
+static ISR_CODE bool ISR_FUNC(put_char)(char c)
+{
+    uint16_t next_head = BUFNEXT(rx_buffer.head, rx_buffer);
+
+    if(next_head == rx_buffer.tail)
+        rx_buffer.overflow = 1;
+    else {
+        rx_buffer.data[rx_buffer.head] = c;
+        rx_buffer.head = next_head;
+    }
+
+    return true;
+}
+
 // End transfer handler.
 static void end_transfer (bool send_ack)
 {
+    // Restore input stream and detach protocol loop from foreground process.
+    hal.stream.set_enqueue_rt_handler(rt_handler);
+    grbl.on_execute_realtime = on_execute_realtime;
+
     if(ymodem.handle) {
         vfs_close(ymodem.handle);
         ymodem.handle = NULL;
     }
-
-    // Restore stream handlers and detach protocol loop from foreground process.
-    memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));
-    hal.stream.set_enqueue_rt_handler(rt_handler);
-    grbl.on_execute_realtime = on_execute_realtime;
 
     if(send_ack) {
         hal.stream.write_char(ASCII_ACK);
@@ -267,7 +293,7 @@ static void protocol_loop (sys_state_t state)
         }
     }
 
-    while((c = active_stream.read()) != SERIAL_NO_DATA) {
+    while((c = get_char()) != SERIAL_NO_DATA) {
 
         ymodem.next_timeout = hal.get_elapsed_ticks() + 1000;
 
@@ -335,18 +361,19 @@ static bool trap_initial_soh (char c)
 {
     if(c == ASCII_SOH || c == ASCII_STX) {
 
-        memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));           // Save current stream pointers,
-        rt_handler = hal.stream.set_enqueue_rt_handler(stream_buffer_all);  // stop core real-time command handling and
-        hal.stream.read = stream_get_null;                                  // block core protocol loop from reading from input
+        rx_buffer.head = rx_buffer.tail = 0;
+        rt_handler = hal.stream.set_enqueue_rt_handler(put_char);   // Buffer stream input for YModem protocol
 
-        on_execute_realtime = grbl.on_execute_realtime;                     // Add YModem protocol loop
-        grbl.on_execute_realtime = protocol_loop;                           // to grblHAL foreground process
+        on_execute_realtime = grbl.on_execute_realtime;             // Add YModem protocol loop
+        grbl.on_execute_realtime = protocol_loop;                   // to grblHAL foreground process
 
-        memset(&ymodem, 0, sizeof(ymodem_t));                               // Init YModem variables
+        memset(&ymodem, 0, sizeof(ymodem_t));                       // Init YModem variables
         ymodem.process = await_soh;
         ymodem.next_timeout = hal.get_elapsed_ticks() + 1000;
 
-        return false;                                                       // Return false to add character to input buffer
+        put_char(c);
+
+        return true;                                                // Return true to drop character
     }
 
     return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
