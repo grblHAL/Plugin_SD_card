@@ -316,7 +316,7 @@ static status_code_t tool_change (parser_state_t *parser_state)
 
     status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99);
 
-    return status == Status_Handled ? Status_OK : status;
+    return status == Status_Handled ? Status_Unhandled : status;
 }
 
 // Perform a pallet shuttle.
@@ -401,7 +401,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.14");
+        report_plugin("FS macro plugin", "0.15");
 }
 
 void fs_macros_init (void)
