@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2024 Terje Io
+  Copyright (c) 2018-2025 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -119,19 +119,6 @@ static void trap_state_change_request(uint_fast16_t state);
 static status_code_t trap_status_messages (status_code_t status_code);
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode);
 //static report_t active_reports;
-
-PROGMEM static const status_detail_t status_detail[] = {
-    { Status_SDMountError, "SD Card mount failed." },
-    { Status_SDReadError, "SD Card file delete failed." },
-    { Status_SDFailedOpenDir, "SD Card directory listing failed." },
-    { Status_SDDirNotFound, "SD Card directory not found." },
-    { Status_SDFileEmpty, "SD Card file empty." }
-};
-
-static error_details_t error_details = {
-    .errors = status_detail,
-    .n_errors = sizeof(status_detail) / sizeof(status_detail_t)
-};
 
 #ifdef __MSP432E401Y__
 /*---------------------------------------------------------*/
@@ -378,6 +365,7 @@ static void sdcard_end_job (bool flush)
     grbl.on_stream_changed = on_stream_changed;
 
     memcpy(&hal.stream, &active_stream, sizeof(io_stream_t));       // Restore stream pointers,
+    stream_set_type(hal.stream.type, hal.stream.file);              // ...
     active_stream.type = StreamType_Null;                           // ...
     hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);    // real time command handling and
     if(grbl.report.status_message == trap_status_messages)          // ...
@@ -590,9 +578,8 @@ static void stream_changed (stream_type_t type)
         if(webui && (type != StreamType_WebSocket || hal.stream.state.webui_connected)) {
             active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // Restore previous real time handler,
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));       // save current stream pointers
-            hal.stream.type = StreamType_File;                              // then redirect to read from SD card instead
-            hal.stream.file = file.handle;                                  // ...
-            hal.stream.read = read_redirected;                              // ...
+            hal.stream.read = read_redirected;                              // then redirect to read from SD card instead
+            stream_set_type(StreamType_File, file.handle);                  // ...
 
             if(hal.stream.suspend_read)                                     // If active stream support tool change suspend
                 hal.stream.suspend_read = sdcard_suspend;                   // then we do as well
@@ -626,9 +613,8 @@ status_code_t stream_file (sys_state_t state, char *fname)
         if(!(grbl.on_file_open && (retval = grbl.on_file_open(fname, file.handle, true)) == Status_OK)) {
 
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
-            hal.stream.type = StreamType_File;                          // then redirect to read from SD card instead
-            hal.stream.file = file.handle;                              // ...
-            hal.stream.read = sdcard_read;                              // ...
+            hal.stream.read = sdcard_read;                              // then redirect to read from SD card instead
+            stream_set_type(StreamType_File, file.handle);              // ...
             if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
                 hal.stream.suspend_read = sdcard_suspend;               // then we do as well
             else                                                        //
@@ -803,7 +789,7 @@ static void onReportOptions (bool newopt)
 
 sdcard_events_t *sdcard_init (void)
 {
-    static const sys_command_t sdcard_command_list[] = {
+    PROGMEM static const sys_command_t sdcard_command_list[] = {
         {"F", sd_cmd_file_filtered, {}, {
             .str = "list files on SD card, filtered"
          ASCII_EOL "$F=<filename> - run SD card file"
@@ -821,6 +807,19 @@ sdcard_events_t *sdcard_init (void)
     static sys_commands_t sdcard_commands = {
         .n_commands = sizeof(sdcard_command_list) / sizeof(sys_command_t),
         .commands = sdcard_command_list
+    };
+
+    PROGMEM static const status_detail_t status_detail[] = {
+        { Status_SDMountError, "SD Card mount failed." },
+        { Status_SDReadError, "SD Card file delete failed." },
+        { Status_SDFailedOpenDir, "SD Card directory listing failed." },
+        { Status_SDDirNotFound, "SD Card directory not found." },
+        { Status_SDFileEmpty, "SD Card file empty." }
+    };
+
+    static error_details_t error_details = {
+        .errors = status_detail,
+        .n_errors = sizeof(status_detail) / sizeof(status_detail_t)
     };
 
     active_stream.type = StreamType_Null;
