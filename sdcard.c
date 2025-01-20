@@ -346,7 +346,7 @@ static status_code_t sdcard_ls (bool filtered)
 {
     char path[MAX_PATHLEN] = "", name[BUFLEN]; // NB! also used as work area when recursing directories
 
-    return !!file.fs && scan_dir(path, 10, name, filtered) == FR_OK ? Status_OK : Status_SDFailedOpenDir;
+    return file.fs ? (scan_dir(path, 10, name, filtered) == FR_OK ? Status_OK : Status_SDFailedOpenDir) : Status_SDNotMounted;
 }
 
 static void sdcard_end_job (bool flush)
@@ -602,7 +602,9 @@ status_code_t stream_file (sys_state_t state, char *fname)
 {
     status_code_t retval = Status_Unhandled;
 
-    if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+    if(!file.fs)
+        retval = Status_SDNotMounted;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(fname && file_open(fname)) {
 
@@ -691,7 +693,7 @@ static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
 {
     frewind = false;
 
-    return sdcard_unmount() ? Status_OK : Status_SDMountError;
+    return file.fs ? (sdcard_unmount() ? Status_OK : Status_SDMountError) : Status_SDNotMounted;
 }
 
 static void sd_detect (void *mount)
@@ -713,7 +715,9 @@ static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
-    if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+    if(!file.fs)
+        retval = Status_SDNotMounted;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(args) {
         if(file_open(args)) {
@@ -743,7 +747,9 @@ static status_code_t sd_cmd_unlink (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
-    if (!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+    if(!file.fs)
+        retval = Status_SDNotMounted;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(args)
         retval = vfs_unlink(args) ? Status_OK : Status_SDReadError;
@@ -784,7 +790,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        report_plugin("SDCARD", "1.18");
+        report_plugin("SDCARD", "1.19");
 }
 
 sdcard_events_t *sdcard_init (void)
@@ -814,7 +820,7 @@ sdcard_events_t *sdcard_init (void)
         { Status_SDReadError, "SD Card file delete failed." },
         { Status_SDFailedOpenDir, "SD Card directory listing failed." },
         { Status_SDDirNotFound, "SD Card directory not found." },
-        { Status_SDFileEmpty, "SD Card file empty." }
+        { Status_SDNotMounted, "SD Card not mounted." }
     };
 
     static error_details_t error_details = {
