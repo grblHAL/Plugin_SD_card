@@ -3,7 +3,7 @@
 
   Part of grblHAL SD card plugins
 
-  Copyright (c) 2023-2024 Terje Io
+  Copyright (c) 2023-2025 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -294,7 +294,7 @@ static status_code_t macro_execute (macro_id_t macro_id)
 #if NGC_EXPRESSIONS_ENABLE
 
 // Set next and/or current tool. Called by gcode.c on on a Tn or M61 command (via HAL).
-static void tool_select (tool_data_t *tool, bool next)
+static void macro_tool_select (tool_data_t *tool, bool next)
 {
     char filename[30];
 
@@ -302,7 +302,7 @@ static void tool_select (tool_data_t *tool, bool next)
         macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98);
 }
 
-static status_code_t tool_change (parser_state_t *parser_state)
+static status_code_t macro_tool_change (parser_state_t *parser_state)
 {
     char filename[30];
     int32_t current_tool = (int32_t)ngc_named_param_get_by_id(NGCParam_current_tool),
@@ -311,7 +311,7 @@ static status_code_t tool_change (parser_state_t *parser_state)
     if(next_tool == -1)
         return Status_GCodeToolError;
 
-    if(current_tool == next_tool || next_tool == 0)
+    if(current_tool == next_tool || (!settings.macro_atc_flags.execute_m6t0 && next_tool == 0))
         return Status_OK;
 
     status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99);
@@ -320,7 +320,7 @@ static status_code_t tool_change (parser_state_t *parser_state)
 }
 
 // Perform a pallet shuttle.
-static void pallet_shuttle (void)
+static void macro_pallet_shuttle (void)
 {
     char filename[30];
 
@@ -337,8 +337,42 @@ static void atc_path_fix (char *path)
         strcat(path, "/");
 }
 
+static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
+{
+    return hal.tool.change == macro_tool_change;
+}
+
+static const setting_detail_t macro_settings[] = {
+    { Setting_MacroATC_Options, Group_Toolchange, "Macro ATC options", NULL, Format_Bitfield, "Execute M6T0", NULL, NULL, Setting_IsExtended, &settings.macro_atc_flags.value, NULL, is_setting_available },
+};
+
+#ifndef NO_SETTINGS_DESCRIPTIONS
+static const setting_descr_t macro_settings_descr[] = {
+    { Setting_MacroATC_Options, "Options for ATC macros." }
+};
+#endif
+
+static void macro_settings_restore (void)
+{
+    settings.macro_atc_flags.value = 0;
+}
+
 static void atc_macros_attach (const char *path, const vfs_t *fs)
 {
+    static bool settings_registered = false;
+
+    static setting_details_t macro_setting_details = {
+        .is_core = true,
+        .settings = macro_settings,
+        .n_settings = sizeof(macro_settings) / sizeof(setting_detail_t),
+    #ifndef NO_SETTINGS_DESCRIPTIONS
+        .descriptions = macro_settings_descr,
+        .n_descriptions = sizeof(macro_settings_descr) / sizeof(setting_descr_t),
+    #endif
+        .restore = macro_settings_restore,
+        .save = settings_write_global
+    };
+
     vfs_stat_t st;
     char filename[30];
 
@@ -348,9 +382,15 @@ static void atc_macros_attach (const char *path, const vfs_t *fs)
         atc_path_fix(tc_path);
 
         if(vfs_stat(strcat(strcpy(filename, tc_path), "tc.macro"), &st) == 0) {
+
             hal.driver_cap.atc = On;
-            hal.tool.select = tool_select;
-            hal.tool.change = tool_change;
+            hal.tool.select = macro_tool_select;
+            hal.tool.change = macro_tool_change;
+
+            if(!settings_registered) {
+                settings_registered = true;
+                settings_register(&macro_setting_details);
+            }
         }
     }
 
@@ -360,7 +400,7 @@ static void atc_macros_attach (const char *path, const vfs_t *fs)
         atc_path_fix(tc_path);
 
         on_pallet_shuttle = hal.pallet_shuttle;
-        hal.pallet_shuttle = pallet_shuttle;
+        hal.pallet_shuttle = macro_pallet_shuttle;
     }
 
     if(on_vfs_mount)
@@ -371,7 +411,7 @@ static void atc_macros_detach (const char *path)
 {
     char tc_path[15];
 
-    if(hal.tool.select == tool_select) {
+    if(hal.tool.select == macro_tool_select) {
 
         strcpy(tc_path, path);
         atc_path_fix(tc_path);
@@ -384,7 +424,7 @@ static void atc_macros_detach (const char *path)
         }
     }
 
-    if(hal.pallet_shuttle == pallet_shuttle) {
+    if(hal.pallet_shuttle == macro_pallet_shuttle) {
         hal.pallet_shuttle = on_pallet_shuttle;
         on_pallet_shuttle = NULL;
     }
@@ -401,7 +441,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.15");
+        report_plugin("FS macro plugin", "0.16");
 }
 
 void fs_macros_init (void)

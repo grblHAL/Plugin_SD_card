@@ -100,7 +100,7 @@ static file_t file = {
     .pos = 0
 };
 
-static bool frewind = false, webui = false;
+static bool frewind = false, webui = false, mount_changed = false, realtime_report_subscribed = false, sd_detectable = false;
 static io_stream_t active_stream;
 static sdcard_events_t sdcard;
 static driver_reset_ptr driver_reset;
@@ -114,7 +114,7 @@ static stream_read_ptr read_redirected;
 static status_message_ptr status_message = NULL;
 
 static void sdcard_end_job (bool flush);
-static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report);
+static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report);
 static void trap_state_change_request(uint_fast16_t state);
 static status_code_t trap_status_messages (status_code_t status_code);
 static void sdcard_on_program_completed (program_flow_t program_flow, bool check_mode);
@@ -191,6 +191,8 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
 
         if((dirent = vfs_readdir(dir)) == NULL || dirent->name[0] == '\0')
             break;
+        if(vfs_errno)
+            break;
 
         subdirs |= dirent->st_mode.directory;
 
@@ -200,8 +202,13 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
         }
     }
 
+    int err = vfs_errno;
+
     vfs_closedir(dir);
     dir = NULL;
+
+    if(err)
+        return err;
 
     if((subdirs = (subdirs && --depth)))
         subdirs = (dir = vfs_opendir(*path == '\0' ? "/" : path)) != NULL;
@@ -282,6 +289,8 @@ static int16_t file_read (void)
 
 static bool sdcard_mount (void)
 {
+    bool is_mounted = !!file.fs;
+
     if(sdcard.on_mount) {
 
         char *mdev = sdcard.on_mount(&file.fs);
@@ -309,6 +318,14 @@ static bool sdcard_mount (void)
         file.fs = NULL;
     }
 
+    mount_changed = is_mounted != !!file.fs;
+
+    if(file.fs && !realtime_report_subscribed) {
+        realtime_report_subscribed = true;
+        on_realtime_report = grbl.on_realtime_report;
+        grbl.on_realtime_report = onRealtimeReport;     // Add mount status changes and job percent complete to real time report
+    }
+
     if(file.fs != NULL)
         fs_fatfs_mount("/");
 
@@ -323,16 +340,14 @@ static void sdcard_auto_mount (void *data)
 
 static bool sdcard_unmount (void)
 {
-    bool ok = true;
-
     if(file.fs) {
         if(sdcard.on_unmount)
-            ok = sdcard.on_unmount(&file.fs);
+            mount_changed = sdcard.on_unmount(&file.fs);
 #ifdef NEW_FATFS
         else
-            ok = f_unmount(dev) == FR_OK;
+            mount_changed = f_unmount(dev) == FR_OK;
 #endif
-        if(ok && file.fs) {
+        if(mount_changed && file.fs) {
             free(file.fs);
             file.fs = NULL;
             vfs_unmount("/");
@@ -352,9 +367,6 @@ static status_code_t sdcard_ls (bool filtered)
 static void sdcard_end_job (bool flush)
 {
     file_close();
-
-    if(grbl.on_realtime_report == sdcard_report)
-        grbl.on_realtime_report = on_realtime_report;
 
     if(grbl.on_program_completed == sdcard_on_program_completed)
         grbl.on_program_completed = on_program_completed;
@@ -378,7 +390,6 @@ static void sdcard_end_job (bool flush)
     if(flush)                                                       // Flush input buffer?
         hal.stream.reset_read_buffer();                             // Yes, do it.
 
-    on_realtime_report = NULL;
     state_change_requested = NULL;
 
     webui = frewind = false;
@@ -461,26 +472,6 @@ static status_code_t trap_status_messages (status_code_t status_code)
     }
 
     return status_code;
-}
-
-static void sdcard_report (stream_write_ptr stream_write, report_tracking_flags_t report)
-{
-    if(hal.stream.read == read_redirected) {
-
-        char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
-
-        if(state_get() != STATE_IDLE && !strncmp(pct_done, "100.0", 5))
-            strcpy(pct_done, "99.9");
-
-        stream_write("|SD:");
-        stream_write(pct_done);
-        stream_write(",");
-        stream_write(file.name);
-    } else if(hal.stream.read == await_cycle_start)
-        stream_write("|SD:Pending");
-
-    if(on_realtime_report)
-        on_realtime_report(stream_write, report);
 }
 
 static void sdcard_restart_msg (void *data)
@@ -621,9 +612,6 @@ status_code_t stream_file (sys_state_t state, char *fname)
                 hal.stream.suspend_read = sdcard_suspend;               // then we do as well
             else                                                        //
                 hal.stream.suspend_read = NULL;                         // else not.
-
-            on_realtime_report = grbl.on_realtime_report;
-            grbl.on_realtime_report = sdcard_report;                    // Add percent complete to real time report
 
             on_program_completed = grbl.on_program_completed;
             grbl.on_program_completed = sdcard_on_program_completed;
@@ -779,6 +767,37 @@ ISR_CODE void ISR_FUNC(sdcard_detect)(bool mount)
     task_add_immediate(sd_detect, (void *)mount);
 }
 
+static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
+{
+    if(hal.stream.read == read_redirected) {
+
+        char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
+
+        if(state_get() != STATE_IDLE && !strncmp(pct_done, "100.0", 5))
+            strcpy(pct_done, "99.9");
+
+        stream_write("|SD:");
+        stream_write(pct_done);
+        stream_write(",");
+        stream_write(file.name);
+    } else if(hal.stream.read == await_cycle_start)
+        stream_write("|SD:Pending");
+    else if(report.all || mount_changed) {
+        stream_write("|SD:");
+        stream_write(uitoa((sd_detectable ? 2 : 0) + !!file.fs));
+        mount_changed = false;
+    }
+
+    if(on_realtime_report)
+        on_realtime_report(stream_write, report);
+}
+
+static void sd_detect_pin (xbar_t *pin, void *data)
+{
+    if(pin->id == Input_SdCardDetect)
+        sd_detectable = true;
+}
+
 static void onReportOptions (bool newopt)
 {
     on_report_options(newopt);
@@ -790,7 +809,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        report_plugin("SDCARD", "1.19");
+        report_plugin("SDCARD", "1.20");
 }
 
 sdcard_events_t *sdcard_init (void)
@@ -831,6 +850,8 @@ sdcard_events_t *sdcard_init (void)
     active_stream.type = StreamType_Null;
 
     hal.driver_cap.sd_card = On;
+
+    hal.enumerate_pins(false, sd_detect_pin, NULL);
 
     driver_reset = hal.driver_reset;
     hal.driver_reset = sdcard_reset;
