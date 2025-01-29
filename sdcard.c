@@ -289,6 +289,8 @@ static int16_t file_read (void)
 
 static bool sdcard_mount (void)
 {
+    static FATFS *fs = NULL;
+
     bool is_mounted = !!file.fs;
 
     if(sdcard.on_mount) {
@@ -300,30 +302,26 @@ static bool sdcard_mount (void)
             if(mdev)
                 strcpy(dev, mdev);
 #endif
-            fs_fatfs_mount("/");
         }
+    } else {
 
-        return file.fs != NULL;
+        if(fs == NULL)
+            fs = malloc(sizeof(FATFS));
+
+#ifdef NEW_FATFS
+        if(fs && (f_mount(fs, dev, 1) == FR_OK))
+#else
+        if(fs && (f_mount(0, fs) == FR_OK))
+#endif
+            file.fs = fs;
+        else
+            file.fs = NULL;
     }
 
-    if(file.fs == NULL)
-        file.fs = malloc(sizeof(FATFS));
-
-  #ifdef NEW_FATFS
-    if(file.fs && f_mount(file.fs, dev, 1) != FR_OK) {
-  #else
-    if(file.fs && f_mount(0, file.fs) != FR_OK) {
-  #endif
-        free(file.fs);
-        file.fs = NULL;
-    }
-
-    mount_changed = is_mounted != !!file.fs;
-
-    if(file.fs && !realtime_report_subscribed) {
+    if((mount_changed = is_mounted != !!file.fs) && !realtime_report_subscribed) {
         realtime_report_subscribed = true;
         on_realtime_report = grbl.on_realtime_report;
-        grbl.on_realtime_report = onRealtimeReport;     // Add mount status changes and job percent complete to real time report
+        grbl.on_realtime_report = onRealtimeReport; // Add mount status changes and job percent complete to real time report
     }
 
     if(file.fs != NULL)
@@ -346,9 +344,11 @@ static bool sdcard_unmount (void)
 #ifdef NEW_FATFS
         else
             mount_changed = f_unmount(dev) == FR_OK;
+#else
+        else
+            mount_changed = f_mount(0, NULL) == FR_OK;
 #endif
         if(mount_changed && file.fs) {
-            free(file.fs);
             file.fs = NULL;
             vfs_unmount("/");
         }
@@ -714,10 +714,15 @@ static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
 
                 int16_t c;
                 char buf[2] = {0};
+
                 while((c = file_read()) != -1) {
-                    buf[0] = (char)c;
-                    hal.stream.write(buf);
+                    if(file.eol == 0) {
+                        buf[0] = (char)c;
+                        hal.stream.write(buf);
+                    } else if(file.eol == 1)
+                        hal.stream.write(ASCII_EOL);
                 }
+
                 file_close();
                 retval = Status_OK;
             } else
@@ -809,7 +814,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",SD");
 #endif
     else
-        report_plugin("SDCARD", "1.20");
+        report_plugin("SDCARD", "1.21");
 }
 
 sdcard_events_t *sdcard_init (void)
