@@ -1,9 +1,9 @@
 /*
-  ymodem.h - simple file transfer protocol
+  fs_stream.h - file streaming plugin
 
-  Part of SDCard plugin for grblHAL
+  Part of grblHAL
 
-  Copyright (c) 2021-2025 Terje Io
+  Copyright (c) 2018-2025 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -19,4 +19,23 @@
   along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
-void ymodem_init (void);
+
+#pragma once
+
+#include "driver.h"
+#include "grbl/hal.h"
+
+#if FS_ENABLE
+
+typedef struct
+{
+    char name[50];
+    size_t size;
+    size_t pos;
+    uint32_t line;
+} stream_job_t;
+
+stream_job_t *stream_get_job_info (void);
+status_code_t stream_file (sys_state_t state, char *fname);
+
+#endif // FS_STREAM_ENABLE

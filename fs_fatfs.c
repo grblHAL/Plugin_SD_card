@@ -5,31 +5,25 @@
 
   Copyright (c) 2022-2024 Terje Io
 
-  Grbl is free software: you can redistribute it and/or modify
+  grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Grbl is distributed in the hope that it will be useful,
+  grblHAL is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#if defined(ARDUINO)
-#include "../driver.h"
-#include "../grbl/platform.h"
-#include "../grbl/vfs.h"
-#else
 #include "driver.h"
 #include "grbl/platform.h"
 #include "grbl/vfs.h"
-#endif
 
-#if SDCARD_ENABLE
+#if FS_ENABLE & FS_FATFS
 
 #if defined(ESP_PLATFORM)
 #include "esp_vfs_fat.h"
@@ -249,6 +243,11 @@ static void fs_closedir (vfs_dir_t *dir)
     }
 }
 
+static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
+{
+    return (vfs_errno = f_chmod(filename, attr.mode, mask.mode)) == FR_OK ? 0 : -1;
+}
+
 static int fs_stat (const char *filename, vfs_stat_t *st)
 {
     FILINFO f;
@@ -346,6 +345,7 @@ void fs_fatfs_mount (const char *path)
         .fopendir = fs_opendir,
         .readdir = fs_readdir,
         .fclosedir = fs_closedir,
+        .fchmod = fs_chmod,
         .fstat = fs_stat,
         .futime = fs_utime,
         .fgetcwd = fs_getcwd,

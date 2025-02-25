@@ -3,36 +3,31 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2022 Terje Io
+  Copyright (c) 2018-2025 Terje Io
 
-  Grbl is free software: you can redistribute it and/or modify
+  grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Grbl is distributed in the hope that it will be useful,
+  grblHAL is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef _SDCARD_H_
-#define _SDCARD_H_
+#pragma once
 
-#if defined(ARDUINO)
-#include "../driver.h"
-#include "../grbl/hal.h"
-#include "../grbl/platform.h"
-#else
 #include "driver.h"
 #include "grbl/hal.h"
 #include "grbl/platform.h"
-#endif
 
-#if SDCARD_ENABLE
+#if FS_ENABLE & FS_SDCARD
+
+#include "fs_stream.h"
 
 #if defined(ESP_PLATFORM)
 #include "esp_vfs_fat.h"
@@ -58,21 +53,13 @@ typedef struct {
     on_unmount_ptr on_unmount;
 } sdcard_events_t;
 
-typedef struct
-{
-    char name[50];
-    size_t size;
-    size_t pos;
-    uint32_t line;
-} sdcard_job_t;
+typedef stream_job_t sdcard_job_t;
+
+#define sdcard_get_job_info() stream_get_job_info() // Deprecated, call stream_get_job_info() directly.
+#define sdcard_busy() stream_is_file()              // Deprecated, call stream_is_file() directly.
 
 sdcard_events_t *sdcard_init (void);
-bool sdcard_busy (void); // Deprecated, use stream_is_file() instead.
 FATFS *sdcard_getfs (void);
-sdcard_job_t *sdcard_get_job_info (void);
 void sdcard_detect (bool mount);
-status_code_t stream_file (sys_state_t state, char *fname);
 
-#endif // SDCARD_ENABLE
-
-#endif
+#endif // FS_ENABLE & FS_SDCARD

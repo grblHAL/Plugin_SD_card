@@ -19,13 +19,9 @@
   along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifdef ARDUINO
-#include "../driver.h"
-#else
 #include "driver.h"
-#endif
 
-#if SDCARD_ENABLE || LITTLEFS_ENABLE
+#if FS_ENABLE
 
 #include <stdio.h>
 #include <string.h>
@@ -357,7 +353,7 @@ static void macro_settings_restore (void)
     settings.macro_atc_flags.value = 0;
 }
 
-static void atc_macros_attach (const char *path, const vfs_t *fs)
+static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t mode)
 {
     static bool settings_registered = false;
 
@@ -404,7 +400,7 @@ static void atc_macros_attach (const char *path, const vfs_t *fs)
     }
 
     if(on_vfs_mount)
-        on_vfs_mount(path, fs);
+        on_vfs_mount(path, fs, mode);
 }
 
 static void atc_macros_detach (const char *path)
@@ -441,11 +437,14 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.16");
+        report_plugin("FS macro plugin", "0.17");
 }
 
 void fs_macros_init (void)
 {
+    if(on_report_options)
+        return;
+
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = report_options;
 
@@ -466,4 +465,4 @@ void fs_macros_init (void)
 #endif
 }
 
-#endif // SDCARD_ENABLE || LITTLEFS_ENABLE
+#endif // FS_ENABLE

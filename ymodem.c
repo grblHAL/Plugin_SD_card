@@ -27,18 +27,13 @@
 
 #include "sdcard.h"
 
-#if SDCARD_ENABLE == 2
+#if FS_ENABLE & FS_YMODEM
 
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef ARDUINO
-#include "../grbl/crc.h"
-#include "../grbl/vfs.h"
-#else
 #include "grbl/crc.h"
 #include "grbl/vfs.h"
-#endif
 
 typedef enum {
     YModem_NOOP = 0,

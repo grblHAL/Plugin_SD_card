@@ -3,39 +3,29 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022-2024 Terje Io
- 
-  Grbl is free software: you can redistribute it and/or modify
+  Copyright (c) 2022-2025 Terje Io
+
+  grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
 
-  Grbl is distributed in the hope that it will be useful,
+  grblHAL is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#if defined(ARDUINO)
-#include "../driver.h"
-#else
 #include "driver.h"
-#endif
 
-#if LITTLEFS_ENABLE
+#if FS_ENABLE & FS_LFS
 
-#if defined(ARDUINO)
 #include "../grbl/protocol.h"
 #include "../grbl/platform.h"
 #include "../grbl/vfs.h"
-#else
-#include "../grbl/protocol.h"
-#include "../grbl/platform.h"
-#include "../grbl/vfs.h"
-#endif
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -46,13 +36,15 @@
 #include "../littlefs/lfs.h"
 #include "../littlefs/lfs_util.h"
 
+#define ATTR_MODE 0x6D      // 'm'
 #define ATTR_TIMESTAMP 0x74 // 't'
 
 typedef struct time_file {
     lfs_file_t file;
     bool modified;
     time_t timestamp;
-    struct lfs_attr attrs[1];
+    vfs_st_mode_t st_mode;
+    struct lfs_attr attrs[2];
     struct lfs_file_config cfg;
 } time_file_t;
 
@@ -69,17 +61,21 @@ static vfs_file_t *fs_open (const char *filename, const char *mode)
 
         time_file_t *f = (time_file_t *)&file->handle;
 
-        // set up description of timestamp attribute
+        // set up description of attributes
         f->modified = false;
         f->timestamp = 0;
+        f->st_mode.mode = 0;
         f->attrs[0].type = ATTR_TIMESTAMP;
         f->attrs[0].buffer = &f->timestamp;
         f->attrs[0].size = sizeof(time_t);
+        f->attrs[1].type = ATTR_MODE;
+        f->attrs[1].buffer = &f->st_mode;
+        f->attrs[1].size = sizeof(vfs_st_mode_t);
 
         // set up config to indicate file has custom attributes
         memset(&f->cfg, 0, sizeof(struct lfs_file_config));
         f->cfg.attrs = f->attrs;
-        f->cfg.attr_count = 1;
+        f->cfg.attr_count = 2;
 
         while (*mode != '\0') {
             if (*mode == 'r')
@@ -257,9 +253,13 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
     struct lfs_info f;
 
     if ((vfs_errno = lfs_stat(&lfs, filename, &f)) == LFS_ERR_OK) {
-        st->st_size = f.size;
+
         st->st_mode.mode = 0;
-        st->st_mode.directory = f.type == LFS_TYPE_DIR;
+        st->st_size = f.size;
+
+        if(!(st->st_mode.directory = f.type == LFS_TYPE_DIR))
+            lfs_getattr(&lfs, filename, ATTR_MODE, &st->st_mode.mode, sizeof(vfs_st_mode_t));
+
 #if ESP_PLATFORM
         if(lfs_getattr(&lfs, filename, ATTR_TIMESTAMP, &st->st_mtim, sizeof(time_t)) != sizeof(time_t))
             st->st_mtim = (time_t)0;
@@ -271,6 +271,22 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
         return -1;
 
     return 0;
+}
+
+static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
+{
+    int res;
+    vfs_stat_t st;
+
+    if((vfs_errno = fs_stat(filename, &st)) == 0) {
+
+        mask.directory = Off;
+        st.st_mode.mode = (st.st_mode.mode & ~mask.mode) | (attr.mode & mask.mode);
+
+        vfs_errno = lfs_setattr(&lfs, filename, ATTR_MODE, &st.st_mode.mode, sizeof(vfs_st_mode_t));
+    }
+
+    return vfs_errno ? -1 : 0;
 }
 
 static int fs_utime (const char *filename, struct tm *modified)
@@ -315,6 +331,7 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
         .fopendir = fs_opendir,
         .readdir = fs_readdir,
         .fclosedir = fs_closedir,
+        .fchmod = fs_chmod,
         .fstat = fs_stat,
         .futime = fs_utime,
 //        .fgetcwd = fs_getcwd,
@@ -338,4 +355,3 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 }
 
 #endif // LITTLEFS_ENABLE
-
