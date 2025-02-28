@@ -243,10 +243,14 @@ static void fs_closedir (vfs_dir_t *dir)
     }
 }
 
+#if FF_FS_READONLY == 0 && FF_USE_CHMOD == 1
+
 static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
 {
     return (vfs_errno = f_chmod(filename, attr.mode, mask.mode)) == FR_OK ? 0 : -1;
 }
+
+#endif
 
 static int fs_stat (const char *filename, vfs_stat_t *st)
 {
@@ -345,7 +349,9 @@ void fs_fatfs_mount (const char *path)
         .fopendir = fs_opendir,
         .readdir = fs_readdir,
         .fclosedir = fs_closedir,
+#if FF_FS_READONLY == 0 && FF_USE_CHMOD == 1
         .fchmod = fs_chmod,
+#endif
         .fstat = fs_stat,
         .futime = fs_utime,
         .fgetcwd = fs_getcwd,

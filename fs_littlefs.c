@@ -275,7 +275,6 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
 
 static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
 {
-    int res;
     vfs_stat_t st;
 
     if((vfs_errno = fs_stat(filename, &st)) == 0) {
