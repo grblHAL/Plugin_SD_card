@@ -51,9 +51,12 @@ static char dev[10] = "";
 
 static FATFS *fatfs = NULL;
 static bool mount_changed = false, realtime_report_subscribed = false, sd_detectable = false;
+static xbar_t *detect_pin = NULL;
 static sdcard_events_t sdcard;
 static on_realtime_report_ptr on_realtime_report;
 static on_report_options_ptr on_report_options;
+static driver_setup_ptr driver_setup;
+static settings_changed_ptr settings_changed;
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report);
 
@@ -67,13 +70,12 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 
 DWORD fatfs_getFatTime (void)
 {
-
-    return    ((2007UL-1980) << 25)    // Year = 2007
+    return    ((2007UL-1980) << 25)  // Year = 2007
             | (6UL << 21)            // Month = June
             | (5UL << 16)            // Day = 5
             | (11U << 11)            // Hour = 11
-            | (38U << 5)            // Min = 38
-            | (0U >> 1)                // Sec = 0
+            | (38U << 5)             // Min = 38
+            | (0U >> 1)              // Sec = 0
             ;
 
 }
@@ -186,8 +188,47 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 
 static void sd_detect_pin (xbar_t *pin, void *data)
 {
-    if(pin->id == Input_SdCardDetect)
+    if(pin->id == Input_SdCardDetect) {
         sd_detectable = true;
+        if(pin->get_value)
+            detect_pin = pin;
+    }
+}
+
+static void onSettingsChanged (settings_t *settings, settings_changed_flags_t changed)
+{
+    static bool mount_attempted = false; // in case some other code hooked into hal.settings_changed
+
+    settings_changed(settings, changed);
+
+    if(!mount_attempted) {
+        mount_attempted = true;
+        sdcard_mount();
+    }
+}
+
+static bool onDriverSetup (settings_t *settings)
+{
+    bool ok;
+
+    settings_changed = hal.settings_changed;
+    hal.settings_changed = onSettingsChanged;
+
+    ok = driver_setup(settings);
+
+    if(hal.settings_changed == onSettingsChanged)
+        hal.settings_changed = settings_changed;
+
+    return ok;
+}
+
+// Attempt early mount before other clients access a shared SPI bus.
+void sdcard_early_mount (void)
+{
+    if(detect_pin == NULL || detect_pin->get_value(detect_pin) == 0.0f) {
+        driver_setup = hal.driver_setup;
+        hal.driver_setup = onDriverSetup;
+    }
 }
 
 static void onReportOptions (bool newopt)
@@ -197,7 +238,7 @@ static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        report_plugin("SDCARD", "1.22");
+        report_plugin("SDCARD", "1.23");
 }
 
 sdcard_events_t *sdcard_init (void)
