@@ -61,5 +61,6 @@ typedef stream_job_t sdcard_job_t;
 sdcard_events_t *sdcard_init (void);
 FATFS *sdcard_getfs (void);
 void sdcard_detect (bool mount);
+void sdcard_early_mount (void);
 
 #endif // FS_ENABLE & FS_SDCARD
