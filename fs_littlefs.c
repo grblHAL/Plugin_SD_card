@@ -152,7 +152,11 @@ static int fs_rename (const char *from, const char *to)
 
 static int fs_unlink (const char *filename)
 {
-    return lfs_remove(&lfs, filename);
+    vfs_stat_t st = {};
+
+    lfs_getattr(&lfs, filename, ATTR_MODE, &st.st_mode.mode, sizeof(vfs_st_mode_t));
+
+    return st.st_mode.read_only ? -1 : lfs_remove(&lfs, filename);
 }
 
 static int fs_mkdir (const char *path)
