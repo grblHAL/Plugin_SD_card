@@ -34,10 +34,11 @@
 #endif
 
 #include "grbl/report.h"
-#include "grbl/protocol.h"
+//#include "grbl/protocol.h"
 #include "grbl/state_machine.h"
 #include "grbl/stream_file.h"
 #include "grbl/vfs.h"
+#include "grbl/task.h"
 
 #include "fs_fatfs.h"
 
@@ -238,7 +239,7 @@ static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        report_plugin("SDCARD", "1.23");
+        report_plugin("SDCARD", "1.24");
 }
 
 sdcard_events_t *sdcard_init (void)
@@ -274,7 +275,7 @@ sdcard_events_t *sdcard_init (void)
     system_register_commands(&sdcard_commands);
 
     if(settings.fs_options.sd_mount_on_boot)
-        protocol_enqueue_foreground_task(sdcard_auto_mount, NULL);
+        task_run_on_startup(sdcard_auto_mount, NULL);
 
     return &sdcard;
 }

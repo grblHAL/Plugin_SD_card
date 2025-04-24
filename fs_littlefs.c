@@ -354,7 +354,7 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
         is_rootfs = !strcmp(path, "/");
         hal.driver_cap.littlefs = vfs_mount(path, &littlefs, mode);
     } else
-        protocol_enqueue_foreground_task(report_warning, "LittleFS mount failed!");
+        task_run_on_startup(report_warning, "LittleFS mount failed!");
 }
 
 #endif // LITTLEFS_ENABLE

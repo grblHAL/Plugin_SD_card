@@ -34,6 +34,7 @@
 #include "grbl/state_machine.h"
 #include "grbl/stream_file.h"
 #include "grbl/vfs.h"
+#include "grbl/task.h"
 
 #include "fs_stream.h"
 #include "macros.h"
@@ -392,7 +393,7 @@ static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
             on_cycle_start = grbl.on_cycle_start;
             grbl.on_cycle_start = onCycleStart;
         }
-        protocol_enqueue_foreground_task(sdcard_restart_msg, NULL);
+        task_add_immediate(sdcard_restart_msg, NULL);
     } else
         stream_end_job(true);
 
@@ -451,7 +452,7 @@ static bool check_input_stream (char c)
     if(!(ok = enqueue_realtime_command(c))) {
         if(hal.stream.read != stream_get_null) {
             hal.stream.read = stream_get_null;
-            protocol_enqueue_foreground_task(terminate_job, NULL);
+            task_add_immediate(terminate_job, NULL);
         }
     }
 
@@ -479,7 +480,7 @@ static void stream_changed (stream_type_t type)
             else                                                                                    // else
                 enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(check_input_stream);   // check for stream takeover
         } else // Terminate job.
-            protocol_enqueue_foreground_task(terminate_job, NULL);
+            task_add_immediate(terminate_job, NULL);
     }
 
     if(on_stream_changed)
