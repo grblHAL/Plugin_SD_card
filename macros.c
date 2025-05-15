@@ -148,139 +148,31 @@ static status_code_t macro_start (char *filename, macro_id_t macro_id)
     return Status_Handled;
 }
 
-#if NGC_PARAMETERS_ENABLE
-
-static status_code_t macro_get_setting (void)
-{
-    float setting_id;
-    status_code_t status = Status_OK;
-    const setting_detail_t *setting;
-    parameter_words_t args = gc_get_g65_arguments();
-
-    if(!args.q)
-        status = Status_GcodeValueWordMissing;
-    if(ngc_param_get(17 /* Q word */, &setting_id) && (setting = setting_get_details((setting_id_t)setting_id, NULL))) {
-
-        uint_fast8_t offset = (setting_id_t)setting_id - setting->id;
-
-        if(setting->datatype == Format_Decimal) {
-            ngc_named_param_set("_value", setting_get_float_value(setting, offset));
-            ngc_named_param_set("_value_returned", 1.0f);
-        } else if(setting_is_integer(setting) || setting_is_list(setting)) {
-            ngc_named_param_set("_value", (float)setting_get_int_value(setting, offset));
-            ngc_named_param_set("_value_returned", 1.0f);
-        }
-    } else
-        status = Status_GcodeValueOutOfRange;
-
-    return status;
-}
-
-static status_code_t macro_ngc_parameter_rw (void)
-{
-    float idx, value;
-    status_code_t status = Status_OK;
-    parameter_words_t args = gc_get_g65_arguments();
-
-    if(!args.i)
-        status = Status_GcodeValueWordMissing;
-    else if(ngc_param_get(4 /* I word */, &idx)) {
-        if(args.q) {
-            if(!(ngc_param_get(17 /* Q word */, &value) && ngc_param_set((ngc_param_id_t)idx, value)))
-                status = Status_GcodeValueOutOfRange;
-        } else if(ngc_param_get((ngc_param_id_t)idx, &value)) {
-            if(args.s) {
-                if(!(ngc_param_get(19 /* S word */, &idx) && ngc_param_set((ngc_param_id_t)idx, value)))
-                    status = Status_GcodeValueOutOfRange;
-            } else {
-                ngc_named_param_set("_value", value);
-                ngc_named_param_set("_value_returned", 1.0f);
-            }
-        } else
-            status = Status_GcodeValueOutOfRange;
-    } else
-        status = Status_GcodeValueOutOfRange;
-
-    return status;
-}
-
-static status_code_t macro_get_machine_state (void)
-{
-    ngc_named_param_set("_value", (float)ffs(state_get()));
-    ngc_named_param_set("_value_returned", 1.0f);
-
-    return Status_OK;
-}
-
-#if N_TOOLS
-
-static status_code_t macro_get_tool_offset (void)
-{
-    float tool_id, axis_id;
-    status_code_t status = Status_OK;
-    parameter_words_t args = gc_get_g65_arguments();
-
-    if(!(args.q && args.r))
-        status = Status_GcodeValueWordMissing;
-    else if(ngc_param_get(17 /* Q word */, &tool_id) && ngc_param_get(18 /* R word */, &axis_id)) {
-        if((uint32_t)tool_id <= grbl.tool_table.n_tools && (uint8_t)axis_id < N_AXIS) {
-            ngc_named_param_set("_value", grbl.tool_table.tool[(uint32_t)tool_id].offset[(uint8_t)axis_id]);
-            ngc_named_param_set("_value_returned", 1.0f);
-        } else
-            status = Status_GcodeIllegalToolTableEntry;
-    } else
-        status = Status_GcodeIllegalToolTableEntry;
-
-    return status;
-}
-
-#endif // N_TOOLS
-
-#endif // NGC_PARAMETERS_ENABLE
-
 static status_code_t macro_execute (macro_id_t macro_id)
 {
     status_code_t status = Status_Unhandled;
 
-    if(macro_id < 100) {
-        switch(macro_id) { // TODO: add enum or defines?
-#if NGC_PARAMETERS_ENABLE
-            case 1:
-                status = macro_get_setting();
-                break;
-  #if N_TOOLS
-           case 2:
-                status = macro_get_tool_offset();
-                break;
-  #endif
-            case 3:
-                status = macro_ngc_parameter_rw();
-                break;
+    if(macro_id >= 100) {
+        if(stack_idx >= (MACRO_STACK_DEPTH - 1))
+            status = Status_FlowControlStackOverflow;
 
-            case 4:
-                status = macro_get_machine_state();
-                break;
-#endif
-        }
-    } else if(stack_idx >= (MACRO_STACK_DEPTH - 1))
-        status = Status_FlowControlStackOverflow;
+    //    else if(state_get() != STATE_IDLE)
+    //        status = Status_IdleError;
 
-//    else if(state_get() != STATE_IDLE)
-//        status = Status_IdleError;
+        else {
 
-    else {
+            char filename[32];
 
-        char filename[32];
+    #if LITTLEFS_ENABLE == 1
+            sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-#if LITTLEFS_ENABLE == 1
-        sprintf(filename, "/littlefs/P%d.macro", macro_id);
+            if((status = macro_start(filename, macro_id)) != Status_Handled)
+    #endif
+            {
+                sprintf(filename, "/P%d.macro", macro_id);
 
-        if((status = macro_start(filename, macro_id)) != Status_Handled)
-#endif
-        {
-            sprintf(filename, "/P%d.macro", macro_id);
-
-            status = macro_start(filename, macro_id);
+                status = macro_start(filename, macro_id);
+            }
         }
     }
 
@@ -437,7 +329,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.17");
+        report_plugin("FS macro plugin", "0.18");
 }
 
 void fs_macros_init (void)
