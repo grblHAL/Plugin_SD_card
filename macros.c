@@ -52,6 +52,7 @@ static driver_reset_ptr driver_reset;
 #if NGC_EXPRESSIONS_ENABLE
 static on_vfs_mount_ptr on_vfs_mount;
 static on_vfs_unmount_ptr on_vfs_unmount;
+static tool_select_ptr tool_select;
 static pallet_shuttle_ptr on_pallet_shuttle;
 static char tc_path[15];
 #endif
@@ -181,20 +182,11 @@ static status_code_t macro_execute (macro_id_t macro_id)
 
 #if NGC_EXPRESSIONS_ENABLE
 
-// Set next and/or current tool. Called by gcode.c on on a Tn or M61 command (via HAL).
-static void macro_tool_select (tool_data_t *tool, bool next)
-{
-    char filename[30];
-
-    if(tool->tool_id > 0)
-        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98);
-}
-
 static status_code_t macro_tool_change (parser_state_t *parser_state)
 {
     char filename[30];
     int32_t current_tool = (int32_t)ngc_named_param_get_by_id(NGCParam_current_tool),
-            next_tool =  (int32_t)ngc_named_param_get_by_id(NGCParam_selected_tool);
+            next_tool = (int32_t)ngc_named_param_get_by_id(NGCParam_selected_tool);
 
     if(next_tool == -1)
         return Status_GCodeToolError;
@@ -205,6 +197,18 @@ static status_code_t macro_tool_change (parser_state_t *parser_state)
     status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99);
 
     return status == Status_Handled ? Status_Unhandled : status;
+}
+
+// Set next and/or current tool. Called by gcode.c on on a Tn or M61 command (via HAL).
+static void macro_tool_select (tool_data_t *tool, bool next)
+{
+    char filename[30];
+
+    if(tool_select)
+        tool_select(tool, next);
+
+    if(hal.tool.change == macro_tool_change && tool->tool_id > 0)
+        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98);
 }
 
 // Perform a pallet shuttle.
@@ -272,12 +276,15 @@ static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t 
         if(vfs_stat(strcat(strcpy(filename, tc_path), "tc.macro"), &st) == 0) {
 
             hal.driver_cap.atc = On;
-            hal.tool.select = macro_tool_select;
             hal.tool.change = macro_tool_change;
 
             if(!settings_registered) {
+
                 settings_registered = true;
                 settings_register(&macro_setting_details);
+
+                tool_select = hal.tool.select;
+                hal.tool.select = macro_tool_select;
             }
         }
     }
@@ -299,14 +306,13 @@ static void atc_macros_detach (const char *path)
 {
     char tc_path[15];
 
-    if(hal.tool.select == macro_tool_select) {
+    if(hal.tool.change == macro_tool_change) {
 
         strcpy(tc_path, path);
         atc_path_fix(tc_path);
 
         if(!strcmp(path, tc_path)) {
             hal.driver_cap.atc = Off;
-            hal.tool.select = NULL;
             hal.tool.change = NULL;
             tc_init();
         }
@@ -329,7 +335,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.18");
+        report_plugin("FS macro plugin", "0.19");
 }
 
 void fs_macros_init (void)

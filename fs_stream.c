@@ -736,6 +736,7 @@ void fs_stream_init (void)
         { Status_FsFailedOpenDir, "Directory listing failed." },
         { Status_FSDirNotFound, "Directory not found." },
         { Status_SDNotMounted, "SD Card not mounted." },
+        { Status_FsNotMounted, "File system not mounted." },
         { Status_FsReadOnly, "File system is read only." }
     };
 
