@@ -31,6 +31,7 @@
 #include "grbl/tool_change.h"
 #include "grbl/ngc_flowctrl.h"
 #include "grbl/stream_file.h"
+#include "grbl/task.h"
 
 #ifndef MACRO_STACK_DEPTH
 #define MACRO_STACK_DEPTH 5
@@ -229,41 +230,27 @@ static void atc_path_fix (char *path)
         strcat(path, "/");
 }
 
-static bool is_setting_available (const setting_detail_t *setting, uint_fast16_t offset)
-{
-    return hal.tool.change == macro_tool_change;
-}
-
-static const setting_detail_t macro_settings[] = {
-    { Setting_MacroATC_Options, Group_Toolchange, "Macro ATC options", NULL, Format_Bitfield, "Execute M6T0", NULL, NULL, Setting_IsExtended, &settings.macro_atc_flags.value, NULL, is_setting_available },
-};
-
-#ifndef NO_SETTINGS_DESCRIPTIONS
-static const setting_descr_t macro_settings_descr[] = {
-    { Setting_MacroATC_Options, "Options for ATC macros." }
-};
-#endif
-
 static void macro_settings_restore (void)
 {
     settings.macro_atc_flags.value = 0;
 }
 
+static atc_status_t atc_get_state (void)
+{
+    return hal.tool.change == macro_tool_change // TODO: recheck for tc.macro available?
+            ? ATC_Online
+            : (settings.macro_atc_flags.error_on_no_macro ? ATC_Offline : ATC_None);
+}
+
+static void atc_check (void *data)
+{
+    if(settings.macro_atc_flags.error_on_no_macro)
+        hal.tool.atc_get_state = atc_get_state;
+}
+
 static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t mode)
 {
-    static bool settings_registered = false;
-
-    static setting_details_t macro_setting_details = {
-        .is_core = true,
-        .settings = macro_settings,
-        .n_settings = sizeof(macro_settings) / sizeof(setting_detail_t),
-    #ifndef NO_SETTINGS_DESCRIPTIONS
-        .descriptions = macro_settings_descr,
-        .n_descriptions = sizeof(macro_settings_descr) / sizeof(setting_descr_t),
-    #endif
-        .restore = macro_settings_restore,
-        .save = settings_write_global
-    };
+    static bool select_claimed = false;
 
     vfs_stat_t st;
     char filename[30];
@@ -277,12 +264,10 @@ static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t 
 
             hal.driver_cap.atc = On;
             hal.tool.change = macro_tool_change;
+            hal.tool.atc_get_state = atc_get_state;
 
-            if(!settings_registered) {
-
-                settings_registered = true;
-                settings_register(&macro_setting_details);
-
+            if(!select_claimed) {
+                select_claimed = true;
                 tool_select = hal.tool.select;
                 hal.tool.select = macro_tool_select;
             }
@@ -354,11 +339,33 @@ void fs_macros_init (void)
 
 #if NGC_EXPRESSIONS_ENABLE
 
+    static const setting_detail_t macro_settings[] = {
+        { Setting_MacroATC_Options, Group_Toolchange, "Macro ATC options", NULL, Format_Bitfield, "Execute M6T0,Fail M6 if tc.macro not found", NULL, NULL, Setting_IsExtended, &settings.macro_atc_flags.value, NULL },
+    };
+
+    static const setting_descr_t macro_settings_descr[] = {
+        { Setting_MacroATC_Options, "Options for ATC macros." }
+    };
+
+    static setting_details_t macro_setting_details = {
+        .is_core = true,
+        .settings = macro_settings,
+        .n_settings = sizeof(macro_settings) / sizeof(setting_detail_t),
+        .descriptions = macro_settings_descr,
+        .n_descriptions = sizeof(macro_settings_descr) / sizeof(setting_descr_t),
+        .restore = macro_settings_restore,
+        .save = settings_write_global
+    };
+
     on_vfs_mount = vfs.on_mount;
     vfs.on_mount = atc_macros_attach;
 
     on_vfs_unmount = vfs.on_unmount;
     vfs.on_unmount = atc_macros_detach;
+
+    settings_register(&macro_setting_details);
+
+    task_run_on_startup(atc_check, NULL);
 
 #endif
 }
