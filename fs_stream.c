@@ -643,19 +643,21 @@ static void onReset (void)
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report)
 {
-    if(hal.stream.read == read_redirected) {
+    if(!report.all) {
+        if(hal.stream.read == read_redirected) {
 
-        char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
+            char *pct_done = ftoa((float)file.pos / (float)file.size * 100.0f, 1);
 
-        if(state_get() != STATE_IDLE && !strncmp(pct_done, "100.0", 5))
-            strcpy(pct_done, "99.9");
+            if(state_get() != STATE_IDLE && !strncmp(pct_done, "100.0", 5))
+                strcpy(pct_done, "99.9");
 
-        stream_write("|SD:");
-        stream_write(pct_done);
-        stream_write(",");
-        stream_write(file.name);
-    } else if(hal.stream.read == await_cycle_start)
-        stream_write("|SD:Pending");
+            stream_write("|SD:");
+            stream_write(pct_done);
+            stream_write(",");
+            stream_write(file.name);
+        } else if(hal.stream.read == await_cycle_start)
+            stream_write("|SD:Pending");
+    }
 
     if(on_realtime_report)
         on_realtime_report(stream_write, report);
@@ -678,7 +680,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.00");
+        report_plugin("FS stream", "1.01");
 }
 
 static void onFsUnmount (const char *path)
