@@ -680,7 +680,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.01");
+        report_plugin("FS stream", "1.02");
 }
 
 static void onFsUnmount (const char *path)
@@ -739,7 +739,8 @@ void fs_stream_init (void)
         { Status_FSDirNotFound, "Directory not found." },
         { Status_SDNotMounted, "SD Card not mounted." },
         { Status_FsNotMounted, "File system not mounted." },
-        { Status_FsReadOnly, "File system is read only." }
+        { Status_FsReadOnly, "File system is read only." },
+        { Status_FsFormatFailed, "File system format failed." }
     };
 
     static error_details_t error_details = {
