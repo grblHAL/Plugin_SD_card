@@ -320,7 +320,11 @@ static int fs_format (void)
 {
     void *work = malloc(FF_MAX_SS);
 
+#if FF_DEFINED >= 86631
     FRESULT res = f_mkfs("/", NULL, work, work ? FF_MAX_SS : 0);
+#else
+    FRESULT res = f_mkfs("/", FM_ANY, 0, work, work ? FF_MAX_SS : 0);
+#endif
 
     if(work)
         free(work);
