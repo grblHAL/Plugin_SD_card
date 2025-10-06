@@ -69,6 +69,9 @@ static vfs_file_t *fs_open (const char *filename, const char *mode)
     BYTE flags = 0;
     vfs_file_t *file = malloc(sizeof(vfs_file_t) + sizeof(FIL));
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+
     if(file) {
 
         while (*mode != '\0') {
@@ -85,6 +88,8 @@ static vfs_file_t *fs_open (const char *filename, const char *mode)
         } else
             file->size = f_size((FIL *)&file->handle);
     }
+
+#pragma GCC diagnostic pop
 
     return file;
 }
@@ -117,7 +122,12 @@ static size_t fs_write (const void *buffer, size_t size, size_t count, vfs_file_
 
 static size_t fs_tell (vfs_file_t *file)
 {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+
     return f_tell((FIL *)&file->handle);
+
+#pragma GCC diagnostic pop
 }
 
 static int fs_seek (vfs_file_t *file, size_t offset)
@@ -127,7 +137,12 @@ static int fs_seek (vfs_file_t *file, size_t offset)
 
 static bool fs_eof (vfs_file_t *file)
 {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+
     return f_eof((FIL *)&file->handle) != 0;
+
+#pragma GCC diagnostic pop
 }
 
 static int fs_rename (const char *from, const char *to)
