@@ -166,8 +166,7 @@ static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
 
 static status_code_t sd_cmd_format (sys_state_t state, char *args)
 {
-    bool ok;
-    status_code_t status = Status_NonPositiveValue; // i.e. not confirmed
+    status_code_t status = Status_InvalidStatement;
 
     if(fatfs) {
 
@@ -177,7 +176,7 @@ static status_code_t sd_cmd_format (sys_state_t state, char *args)
 
             report_message("Formatting SD card...", Message_Info);
 
-            if((ok = vfs_drive_format(drive) >= 0))
+            if(vfs_drive_format(drive) == 0)
                 status = !sdcard_mount() ? Status_SDMountError : Status_OK;
             else
                 status = Status_FsFormatFailed;
@@ -269,7 +268,7 @@ static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        report_plugin("SDCARD", "1.25");
+        report_plugin("SDCARD", "1.26");
 }
 
 sdcard_events_t *sdcard_init (void)
