@@ -68,7 +68,8 @@ static void end_macro (void)
 #if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
 #endif
-            ngc_call_pop();
+            if(macro[stack_idx].id >= 100)
+                ngc_call_pop();
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
@@ -155,26 +156,18 @@ static status_code_t macro_execute (macro_id_t macro_id)
     status_code_t status = Status_Unhandled;
 
     if(macro_id >= 100) {
-        if(stack_idx >= (MACRO_STACK_DEPTH - 1))
-            status = Status_FlowControlStackOverflow;
 
-    //    else if(state_get() != STATE_IDLE)
-    //        status = Status_IdleError;
+        char filename[32];
 
-        else {
+#if LITTLEFS_ENABLE == 1
+        sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-            char filename[32];
+        if((status = macro_start(filename, macro_id)) != Status_Handled)
+#endif
+        {
+            sprintf(filename, "/P%d.macro", macro_id);
 
-    #if LITTLEFS_ENABLE == 1
-            sprintf(filename, "/littlefs/P%d.macro", macro_id);
-
-            if((status = macro_start(filename, macro_id)) != Status_Handled)
-    #endif
-            {
-                sprintf(filename, "/P%d.macro", macro_id);
-
-                status = macro_start(filename, macro_id);
-            }
+            status = macro_start(filename, macro_id);
         }
     }
 
@@ -320,7 +313,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.19");
+        report_plugin("FS macro plugin", "0.20");
 }
 
 void fs_macros_init (void)
