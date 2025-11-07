@@ -406,6 +406,8 @@ ISR_CODE static bool ISR_FUNC(await_toolchange_ack)(char c)
     if(c == CMD_TOOL_ACK) {
         hal.stream.read = active_stream.read;                           // Restore normal stream input for tool change (jog etc)
         active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // ...
+        if(grbl.on_toolchange_ack)
+            grbl.on_toolchange_ack();
     } else
         return enqueue_realtime_command(c);
 
@@ -621,7 +623,7 @@ static status_code_t cmd_unlink (sys_state_t state, char *args)
     else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(args)
-        retval = vfs_unlink(args) ? Status_OK : Status_FileReadError;
+        retval = vfs_unlink(args) ? Status_FileReadError : Status_OK;
 
     return retval;
 }
@@ -680,7 +682,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.02");
+        report_plugin("FS stream", "1.03");
 }
 
 static void onFsUnmount (const char *path)
