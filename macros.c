@@ -332,11 +332,11 @@ void fs_macros_init (void)
 
 #if NGC_EXPRESSIONS_ENABLE
 
-    static const setting_detail_t macro_settings[] = {
+    PROGMEM static const setting_detail_t macro_settings[] = {
         { Setting_MacroATC_Options, Group_Toolchange, "Macro ATC options", NULL, Format_Bitfield, "Execute M6T0,Fail M6 if tc.macro not found", NULL, NULL, Setting_IsExtended, &settings.macro_atc_flags.value, NULL },
     };
 
-    static const setting_descr_t macro_settings_descr[] = {
+    PROGMEM static const setting_descr_t macro_settings_descr[] = {
         { Setting_MacroATC_Options, "Options for ATC macros." }
     };
 

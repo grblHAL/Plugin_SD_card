@@ -317,7 +317,7 @@ static int fs_format (void)
 
 void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 {
-    static const vfs_t littlefs = {
+    PROGMEM static const vfs_t littlefs = {
         .fs_name = "littlefs",
         .fopen = fs_open,
         .fclose = fs_close,

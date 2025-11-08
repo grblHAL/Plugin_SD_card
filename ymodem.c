@@ -81,20 +81,20 @@ static ymodem_status_t get_payload (uint8_t c);
 static ymodem_status_t await_crc (uint8_t c);
 static ymodem_status_t await_eot (uint8_t c);
 
-static int16_t get_char (void)
+static int32_t get_char (void)
 {
     uint_fast16_t tail = rx_buffer.tail;
 
     if(tail == rx_buffer.head)
         return SERIAL_NO_DATA;
 
-    char data = rx_buffer.data[tail];
+    int32_t data = (int32_t)rx_buffer.data[tail];
     rx_buffer.tail = BUFNEXT(tail, rx_buffer);
 
-    return (int16_t)data;
+    return data;
 }
 
-static ISR_CODE bool ISR_FUNC(put_char)(char c)
+static ISR_CODE bool ISR_FUNC(put_char)(uint8_t c)
 {
     uint16_t next_head = BUFNEXT(rx_buffer.head, rx_buffer);
 

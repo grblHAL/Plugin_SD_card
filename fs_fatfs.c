@@ -350,7 +350,7 @@ static int fs_format (void)
 
 void fs_fatfs_mount (const char *path)
 {
-    static const vfs_t fs = {
+    PROGMEM static const vfs_t fs = {
         .fs_name = "FatFs",
         .removable = true,
         .fopen = fs_open,
