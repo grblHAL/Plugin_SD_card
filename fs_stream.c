@@ -148,13 +148,20 @@ static file_status_t allowed (char *filename, bool is_file)
 static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
 {
     int res = 0;
-    bool subdirs = false;
+    bool subdirs = false, add_sep, is_root = !strcmp(path, "/");
     vfs_dir_t *dir;
     vfs_dirent_t *dirent;
     file_status_t status;
 
     if((dir = vfs_opendir(*path == '\0' ? "/" : path)) == NULL)
         return vfs_errno;
+
+    if(!is_root && depth == 0) {
+        *path = '\0';
+        hal.stream.write("[FILE:..|SIZE:-1]" ASCII_EOL);
+    }
+
+    add_sep = strlen(path) > 1;
 
     // Pass 1: Scan files
     while(true) {
@@ -164,12 +171,15 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
         if(vfs_errno)
             break;
 
-        subdirs |= dirent->st_mode.directory;
+        subdirs |= depth > 0 && dirent->st_mode.directory;
 
         if(!dirent->st_mode.directory && (status = filtered ? allowed(dirent->name, true) : filename_valid(dirent->name)) != Filename_Filtered) {
-            if(snprintf(buf, BUFLEN, "[FILE:%s/%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, dirent->name, (uint32_t)dirent->size, status == Filename_Invalid ? "|UNUSABLE" : "") < BUFLEN)
+            if(snprintf(buf, BUFLEN, "[FILE:%s%s%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, add_sep ? "/" : "", dirent->name, (uint32_t)dirent->size, status == Filename_Invalid ? "|UNUSABLE" : "") < BUFLEN)
                 hal.stream.write(buf);
         }
+
+        if(depth == 0 && dirent->st_mode.directory && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
+            hal.stream.write(buf);
     }
 
     int err = vfs_errno;
@@ -189,13 +199,19 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
         if((dirent = vfs_readdir(dir)) == NULL || dirent->name[0] == '\0')
             break;
 
-        if(dirent->st_mode.directory) { // It is a directory
+        if(dirent->st_mode.directory) {
+
             size_t pathlen = strlen(path);
-            if(pathlen + strlen(dirent->name) > (MAX_PATHLEN - 1))
+            if(pathlen + strlen(dirent->name) >= (MAX_PATHLEN - 1))
                 break;
-            sprintf(&path[pathlen], "/%s", dirent->name);
+
+            if(pathlen > 1)
+                strcat(&path[pathlen], "/");
+            strcat(&path[pathlen], dirent->name);
+
             if((res = scan_dir(path, depth, buf, filtered)) != 0)
                 break;
+
             path[pathlen] = '\0';
         }
     }
@@ -257,12 +273,13 @@ static int16_t file_read (void)
     return (int16_t)*c;
 }
 
-
 static status_code_t list_files (bool filtered)
 {
     char path[MAX_PATHLEN] = "", name[BUFLEN]; // NB! also used as work area when recursing directories
 
-    return fs.mounted ? (scan_dir(path, 10, name, filtered) == 0 ? Status_OK : Status_FsFailedOpenDir) : Status_FsNotMounted;
+    vfs_getcwd(path, MAX_PATHLEN);
+
+    return fs.mounted ? (scan_dir(path, settings.fs_options.hierarchical_listing ? 0 : 10, name, filtered) == 0 ? Status_OK : Status_FsFailedOpenDir) : Status_FsNotMounted;
 }
 
 static void stream_end_job (bool flush)
@@ -491,49 +508,55 @@ static void stream_changed (stream_type_t type)
 
 status_code_t stream_file (sys_state_t state, char *fname)
 {
+    vfs_stat_t st;
     status_code_t retval = Status_Unhandled;
 
     if(!fs.mounted)
         retval = Status_SDNotMounted;
     else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
-    else if(fname && file_open(fname)) {
+    else if(fname && vfs_stat(fname, &st) == 0) {
 
-        gc_state.last_error = Status_OK;            // Start with no errors
-        grbl.report.status_message(Status_OK);      // and confirm command to originator.
-        webui = hal.stream.state.webui_connected;   // Did WebUI start this job?
+        if(st.st_mode.directory)
+            retval = vfs_chdir(fname) ? Status_FSDirNotFound : Status_OK;
+        else if(file_open(fname)) {
 
-        if(!(grbl.on_file_open && (retval = grbl.on_file_open(fname, file.handle, true)) == Status_OK)) {
+            gc_state.last_error = Status_OK;            // Start with no errors
+            grbl.report.status_message(Status_OK);      // and confirm command to originator.
+            webui = hal.stream.state.webui_connected;   // Did WebUI start this job?
 
-            memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
-            hal.stream.read = stream_read;                              // then redirect to read from file
-            stream_set_type(StreamType_File, file.handle);              // ...
-            if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
-                hal.stream.suspend_read = stream_suspend;               // then we do as well
-            else                                                        //
-                hal.stream.suspend_read = NULL;                         // else not.
+            if(!(grbl.on_file_open && (retval = grbl.on_file_open(fname, file.handle, true)) == Status_OK)) {
 
-            on_program_completed = grbl.on_program_completed;
-            grbl.on_program_completed = onProgramCompleted;
+                memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
+                hal.stream.read = stream_read;                              // then redirect to read from file
+                stream_set_type(StreamType_File, file.handle);              // ...
+                if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
+                    hal.stream.suspend_read = stream_suspend;               // then we do as well
+                else                                                        //
+                    hal.stream.suspend_read = NULL;                         // else not.
 
-            status_message = grbl.report.status_message;                // Add trap for status messages
-            grbl.report.status_message = trap_status_messages;          // so we can terminate on errors.
+                on_program_completed = grbl.on_program_completed;
+                grbl.on_program_completed = onProgramCompleted;
 
-            enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
+                status_message = grbl.report.status_message;                // Add trap for status messages
+                grbl.report.status_message = trap_status_messages;          // so we can terminate on errors.
 
-            if(grbl.on_stream_changed)
-                grbl.on_stream_changed(hal.stream.type);
+                enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
 
-            read_redirected = hal.stream.read;
+                if(grbl.on_stream_changed)
+                    grbl.on_stream_changed(hal.stream.type);
 
-            if(grbl.on_stream_changed != stream_changed) {
-                on_stream_changed = grbl.on_stream_changed;
-                grbl.on_stream_changed = stream_changed;
-            }
+                read_redirected = hal.stream.read;
 
-            retval = Status_OK;
-        } else
-            file.handle = NULL;
+                if(grbl.on_stream_changed != stream_changed) {
+                    on_stream_changed = grbl.on_stream_changed;
+                    grbl.on_stream_changed = stream_changed;
+                }
+
+                retval = Status_OK;
+            } else
+                file.handle = NULL;
+        }
     } else
         retval = Status_FileOpenFailed;
 

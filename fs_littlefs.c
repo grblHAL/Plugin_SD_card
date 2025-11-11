@@ -50,7 +50,21 @@ typedef struct time_file {
 
 static lfs_t lfs = {0};
 static bool is_rootfs;
+static char cwd[100] = "";
 static const struct lfs_config *lfs_config;
+
+static char *get_path (const char *filename)
+{
+    static char path[120];
+
+    if(strlen(cwd) + strlen(filename) > sizeof(path) - 1)
+        return (char *)filename;
+
+    if(*filename != '/')
+       strcat(strcpy(path, cwd), filename);
+
+    return *filename == '/' ? (char *)filename : path;
+}
 
 static vfs_file_t *fs_open (const char *filename, const char *mode)
 {
@@ -92,7 +106,7 @@ static vfs_file_t *fs_open (const char *filename, const char *mode)
             mode++;
         }
 
-        if((vfs_errno = lfs_file_opencfg(&lfs, &f->file, filename, flags, &f->cfg)) != LFS_ERR_OK) {
+        if((vfs_errno = lfs_file_opencfg(&lfs, &f->file, get_path(filename), flags, &f->cfg)) != LFS_ERR_OK) {
             free(file);
             file = NULL;
         } else
@@ -154,16 +168,16 @@ static int fs_unlink (const char *filename)
 {
     vfs_stat_t st = {};
 
-    lfs_getattr(&lfs, filename, ATTR_MODE, &st.st_mode.mode, sizeof(vfs_st_mode_t));
+    lfs_getattr(&lfs, get_path(filename), ATTR_MODE, &st.st_mode.mode, sizeof(vfs_st_mode_t));
 
-    return st.st_mode.read_only ? -1 : lfs_remove(&lfs, filename);
+    return st.st_mode.read_only ? -1 : lfs_remove(&lfs, get_path(filename));
 }
 
 static int fs_mkdir (const char *path)
 {
     int res;
 
-    if((res = lfs_mkdir(&lfs, path)) == LFS_ERR_OK) {
+    if((res = lfs_mkdir(&lfs, get_path(path))) == LFS_ERR_OK) {
         struct tm dt;
         if(hal.rtc.get_datetime && hal.rtc.get_datetime(&dt)) {
             time_t t = mktime(&dt);
@@ -174,37 +188,11 @@ static int fs_mkdir (const char *path)
     return res;
 }
 
-static int fs_chdir (const char *path)
-{
-#if FF_FS_RPATH
-    return f_chdir(path);
-#else
-    return is_rootfs && !strcmp(path, "/") ? 0 : -1;
-#endif
-}
-/*
 static char *fs_getcwd (char *buf, size_t size)
 {
-    static char cwd[255];
-#if FF_FS_RPATH
-    if ((vfs_errno = f_getcwd(cwd, 255)) == FR_OK) {
-        char *s1, *s2;
-        // Strip drive information
-        if((s2 = strchr(cwd, ':'))) {
-            s1 = cwd;
-            s2++;
-            while(*s2)
-                *s1++ = *s2++;
-            *s1 = '\0';
-        }
-    }
-#else
-    *cwd = '\0'; // TODO: return mount path?
-#endif
-
     return cwd;
 }
-*/
+
 static vfs_dir_t *fs_opendir (const char *path)
 {
     vfs_dir_t *dir = malloc(sizeof(vfs_dir_t) + sizeof(lfs_dir_t));
@@ -233,7 +221,7 @@ static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
     if(!strcmp(f.name, "..") && (vfs_errno = lfs_dir_read(&lfs, (lfs_dir_t *)&dir->handle, &f)) <= 0)
         return NULL;
 
-    if(f.name && *f.name != '\0')
+    if(*f.name != '\0')
         strcpy(dirent->name, f.name);
 
     vfs_errno = 0;
@@ -256,7 +244,7 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
 {
     struct lfs_info f;
 
-    if ((vfs_errno = lfs_stat(&lfs, filename, &f)) == LFS_ERR_OK) {
+    if ((vfs_errno = lfs_stat(&lfs, get_path(filename), &f)) == LFS_ERR_OK) {
 
         st->st_mode.mode = 0;
         st->st_size = f.size;
@@ -277,9 +265,26 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
     return 0;
 }
 
+static int fs_chdir (const char *path)
+{
+    int errno = 0;
+    vfs_stat_t st;
+
+    path = get_path(path);
+
+    if(!strcmp(path, "/"))
+        strcpy(cwd, path);
+    else if((errno = fs_stat(path, &st)) == 0)
+        strcat(strcpy(cwd, path), "/");
+
+    return errno;
+}
+
 static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
 {
     vfs_stat_t st;
+
+    filename = get_path(filename);
 
     if((vfs_errno = fs_stat(filename, &st)) == 0) {
 
@@ -296,7 +301,7 @@ static int fs_utime (const char *filename, struct tm *modified)
 {
     time_t t = mktime(modified);
 
-    return lfs_setattr(&lfs, filename, ATTR_TIMESTAMP, &t, sizeof(time_t));
+    return lfs_setattr(&lfs, get_path(filename), ATTR_TIMESTAMP, &t, sizeof(time_t));
 }
 
 static bool fs_getfree (vfs_free_t *free)
@@ -337,7 +342,7 @@ void fs_littlefs_mount (const char *path, const struct lfs_config *config)
         .fchmod = fs_chmod,
         .fstat = fs_stat,
         .futime = fs_utime,
-//        .fgetcwd = fs_getcwd,
+        .fgetcwd = fs_getcwd,
         .fgetfree = fs_getfree,
         .format = fs_format
     };
