@@ -316,9 +316,9 @@ static void stream_end_job (bool flush)
         grbl.on_stream_changed(hal.stream.type);
 }
 
-static int16_t stream_read (void)
+static int32_t stream_read (void)
 {
-    int16_t c = SERIAL_NO_DATA;
+    int32_t c = SERIAL_NO_DATA;
     sys_state_t state = state_get();
 
     if(file.eol == 1)
@@ -343,13 +343,13 @@ static int16_t stream_read (void)
     return c;
 }
 
-static int16_t await_cycle_start (void)
+static int32_t await_cycle_start (void)
 {
     return -1;
 }
 
 // Drop input from current stream except realtime commands
-ISR_CODE static bool ISR_FUNC(drop_input_stream)(char c)
+ISR_CODE static bool ISR_FUNC(drop_input_stream)(uint8_t c)
 {
     enqueue_realtime_command(c);
 
@@ -418,7 +418,7 @@ static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
         on_program_completed(program_flow, check_mode);
 }
 
-ISR_CODE static bool ISR_FUNC(await_toolchange_ack)(char c)
+ISR_CODE static bool ISR_FUNC(await_toolchange_ack)(uint8_t c)
 {
     if(c == CMD_TOOL_ACK) {
         hal.stream.read = active_stream.read;                           // Restore normal stream input for tool change (jog etc)
@@ -464,7 +464,7 @@ static void terminate_job (void *data)
     report_message("Job terminated due to connection change", Message_Info);
 }
 
-static bool check_input_stream (char c)
+static bool check_input_stream (uint8_t c)
 {
     bool ok;
 
