@@ -39,8 +39,8 @@
 
 typedef struct {
     macro_id_t id;
+    uint32_t repeats;
     vfs_file_t *file;
-//    uint32_t line;
 } macro_stack_entry_t;
 
 static volatile int_fast16_t stack_idx = -1;
@@ -58,34 +58,46 @@ static pallet_shuttle_ptr on_pallet_shuttle;
 static char tc_path[15];
 #endif
 
+static void macro_exit (void);
+
 // Ends macro execution if currently running
 // and restores normal operation.
-static void end_macro (void)
+static bool end_macro (bool failed)
 {
     if(stack_idx >= 0) {
         if(macro[stack_idx].file) {
+
+            if(!failed && --macro[stack_idx].repeats) {
+                vfs_seek(macro[stack_idx].file, 0);
+                return false;
+            }
+
             stream_redirect_close(macro[stack_idx].file);
 #if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
 #endif
+#if NGC_PARAMETERS_ENABLE
             if(macro[stack_idx].id >= 100)
                 ngc_call_pop();
+#endif
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
     }
 
     if(stack_idx == -1) {
-        grbl.on_macro_return = on_macro_return;
+        grbl.on_macro_return = macro_exit;
         on_macro_return = NULL;
     }
+
+    return true;
 }
 
 // Called on a soft reset so that normal operation can be restored.
 static void plugin_reset (void)
 {
     while(stack_idx >= 0)
-        end_macro();
+        end_macro(true);
 
     driver_reset();
 }
@@ -98,7 +110,7 @@ static status_code_t onG65MacroError (status_code_t status_code)
         sprintf(msg, "error %d in macro P%d.macro", (uint8_t)status_code, macro[stack_idx].id);
         report_message(msg, Message_Warning);
 
-        end_macro();
+        end_macro(true);
         grbl.report.status_message(status_code);
     }
 
@@ -109,18 +121,18 @@ static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
 {
     if(stack_idx >= 0 && macro[stack_idx].file == file) {
         if(status == Status_OK) {
-            end_macro();
-            grbl.report.status_message(status);
+            if(end_macro(false))
+                grbl.report.status_message(status);
         } else {
             while(stack_idx >= 0)
-                end_macro();
+                end_macro(true);
         }
     }
 
     return status;
 }
 
-static status_code_t macro_start (char *filename, macro_id_t macro_id)
+static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t repeats)
 {
     vfs_file_t *file;
 
@@ -140,18 +152,27 @@ static status_code_t macro_start (char *filename, macro_id_t macro_id)
 
         if(stack_idx == -1) {
             on_macro_return = grbl.on_macro_return;
-            grbl.on_macro_return = end_macro;
+            grbl.on_macro_return = macro_exit;
         }
 
         stack_idx++;
         macro[stack_idx].file = file;
         macro[stack_idx].id = macro_id;
+        macro[stack_idx].repeats = repeats;
     }
 
     return Status_Handled;
 }
 
-static status_code_t macro_execute (macro_id_t macro_id)
+static void macro_exit (void)
+{
+    if(stack_idx >= 0)
+        end_macro(false);
+    else if(on_macro_return)
+        on_macro_return();
+}
+
+static status_code_t macro_execute (macro_id_t macro_id, parameter_words_t args, uint32_t repeats)
 {
     status_code_t status = Status_Unhandled;
 
@@ -162,16 +183,16 @@ static status_code_t macro_execute (macro_id_t macro_id)
 #if LITTLEFS_ENABLE == 1
         sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-        if((status = macro_start(filename, macro_id)) != Status_Handled)
+        if((status = macro_start(filename, macro_id, repeats)) != Status_Handled)
 #endif
         {
             sprintf(filename, "/P%d.macro", macro_id);
 
-            status = macro_start(filename, macro_id);
+            status = macro_start(filename, macro_id, repeats);
         }
     }
 
-    return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id) : status;
+    return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id, args, repeats) : status;
 }
 
 #if NGC_EXPRESSIONS_ENABLE
@@ -188,7 +209,7 @@ static status_code_t macro_tool_change (parser_state_t *parser_state)
     if(current_tool == next_tool || (!settings.macro_atc_flags.execute_m6t0 && next_tool == 0))
         return Status_OK;
 
-    status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99);
+    status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99, 1);
 
     return status == Status_Handled ? Status_Unhandled : status;
 }
@@ -202,7 +223,7 @@ static void macro_tool_select (tool_data_t *tool, bool next)
         tool_select(tool, next);
 
     if(hal.tool.change == macro_tool_change && tool->tool_id > 0)
-        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98);
+        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98, 1);
 }
 
 // Perform a pallet shuttle.
@@ -210,7 +231,7 @@ static void macro_pallet_shuttle (void)
 {
     char filename[30];
 
-    macro_start(strcat(strcpy(filename, tc_path), "ps.macro"), 97);
+    macro_start(strcat(strcpy(filename, tc_path), "ps.macro"), 97, 1);
 
     if(on_pallet_shuttle)
         on_pallet_shuttle();
@@ -313,7 +334,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.20");
+        report_plugin("FS macro plugin", "0.21");
 }
 
 void fs_macros_init (void)
