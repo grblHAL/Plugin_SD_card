@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2025 Terje Io
+  Copyright (c) 2018-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -78,6 +78,7 @@ typedef struct
     size_t pos;
     uint32_t line;
     uint8_t eol;
+    bool scan_subs;
 } file_t;
 
 static file_t file = {
@@ -245,15 +246,20 @@ static bool file_open (char *filename)
 
         file.handle = cncfile;
         file.size = st.st_size;
-        file.pos = 0;
-        file.line = 0;
-        file.eol = false;
+        file.pos = file.line = file.eol = 0;
+        file.scan_subs = false;
         char *leafname = strrchr(filename, '/');
         strncpy(file.name, leafname ? leafname + 1 : filename, sizeof(file.name));
         file.name[sizeof(file.name) - 1] = '\0';
     }
 
     return file.handle != NULL;
+}
+
+static void file_rewind (void)
+{
+    vfs_seek(file.handle, 0);
+    file.pos = file.line = file.eol = 0;
 }
 
 static int16_t file_read (void)
@@ -329,8 +335,15 @@ static int32_t stream_read (void)
         if(state == STATE_IDLE || (state & (STATE_CYCLE|STATE_HOLD|STATE_CHECK_MODE|STATE_TOOL_CHANGE)))
             c = file_read();
 
-        if(c == -1) { // EOF or error reading or grblHAL problem
-            file_close();
+        if(c == -1) { // EOF, error reading or grblHAL problem
+
+            if(file.scan_subs) {
+                hal.stream.state.m98_macro_prescan = file.scan_subs = false;
+                file_rewind();
+                state_set(STATE_IDLE);
+            } else
+                file_close();
+
             if(file.eol == 0) // Return newline if line was incorrectly terminated
                 c = '\n';
         }
@@ -396,23 +409,31 @@ static void sdcard_restart_msg (void *data)
 
 static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
 {
-#if !WEBUI_ENABLE // TODO: somehow add run time check?
-    frewind = false; // Not (yet?) supported.
-#else
-    frewind = frewind || program_flow == ProgramFlow_CompletedM2; // || program_flow == ProgramFlow_CompletedM30;
-#endif
-    if(frewind && !hal.stream.state.webui_connected) {
-        vfs_seek(file.handle, 0);
-        file.pos = file.line = 0;
-        file.eol = false;
-        hal.stream.read = await_cycle_start;
-        if(grbl.on_cycle_start != onCycleStart) {
-            on_cycle_start = grbl.on_cycle_start;
-            grbl.on_cycle_start = onCycleStart;
+    if(file.scan_subs) {
+        if(!hal.stream.state.m98_macro_prescan && !(hal.stream.state.m98_macro_prescan = program_flow == ProgramFlow_CompletedM2 || program_flow == ProgramFlow_CompletedM30)) {
+            file.scan_subs = false;
+            file_rewind();
+            state_set(STATE_IDLE);
         }
-        task_add_immediate(sdcard_restart_msg, NULL);
-    } else
-        stream_end_job(true);
+    } else if(!hal.stream.state.m98_macro_prescan) {
+#if !WEBUI_ENABLE // TODO: somehow add run time check?
+        frewind = false; // Not (yet?) supported.
+#else
+        frewind = frewind || program_flow == ProgramFlow_CompletedM2;
+#endif
+        if((frewind && !hal.stream.state.webui_connected) || program_flow == ProgramFlow_Return) {
+            file_rewind();
+            if(program_flow != ProgramFlow_Return) {
+                hal.stream.read = await_cycle_start;
+                if(grbl.on_cycle_start != onCycleStart) {
+                    on_cycle_start = grbl.on_cycle_start;
+                    grbl.on_cycle_start = onCycleStart;
+                }
+                task_add_immediate(sdcard_restart_msg, NULL);
+            }
+        } else
+            stream_end_job(true);
+    }
 
     if(on_program_completed)
         on_program_completed(program_flow, check_mode);
@@ -534,6 +555,9 @@ status_code_t stream_file (sys_state_t state, char *fname)
                     hal.stream.suspend_read = stream_suspend;               // then we do as well
                 else                                                        //
                     hal.stream.suspend_read = NULL;                         // else not.
+
+                if((file.scan_subs = state != STATE_CHECK_MODE && settings.flags.m98_prescan_enable))
+                    state_set(STATE_CHECK_MODE);
 
                 on_program_completed = grbl.on_program_completed;
                 grbl.on_program_completed = onProgramCompleted;
@@ -705,7 +729,7 @@ static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.03");
+        report_plugin("FS stream", "1.04");
 }
 
 static void onFsUnmount (const char *path)

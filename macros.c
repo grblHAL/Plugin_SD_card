@@ -3,7 +3,7 @@
 
   Part of grblHAL SD card plugins
 
-  Copyright (c) 2023-2025 Terje Io
+  Copyright (c) 2023-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -41,6 +41,10 @@ typedef struct {
     macro_id_t id;
     uint32_t repeats;
     vfs_file_t *file;
+    size_t pos, pos_return;
+#if NGC_PARAMETERS_ENABLE
+    bool parameter_stack;
+#endif
 } macro_stack_entry_t;
 
 static volatile int_fast16_t stack_idx = -1;
@@ -68,16 +72,19 @@ static bool end_macro (bool failed)
         if(macro[stack_idx].file) {
 
             if(!failed && --macro[stack_idx].repeats) {
-                vfs_seek(macro[stack_idx].file, 0);
+                vfs_seek(macro[stack_idx].file, macro[stack_idx].pos);
                 return false;
             }
 
-            stream_redirect_close(macro[stack_idx].file);
+            if(macro[stack_idx].pos_return)
+                vfs_seek(macro[stack_idx].file, macro[stack_idx].pos_return);
+            else
+                stream_redirect_close(macro[stack_idx].file);
 #if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
 #endif
 #if NGC_PARAMETERS_ENABLE
-            if(macro[stack_idx].id >= 100)
+            if(macro[stack_idx].parameter_stack)
                 ngc_call_pop();
 #endif
             macro[stack_idx].file = NULL;
@@ -86,7 +93,7 @@ static bool end_macro (bool failed)
     }
 
     if(stack_idx == -1) {
-        grbl.on_macro_return = macro_exit;
+        grbl.on_macro_return = on_macro_return;
         on_macro_return = NULL;
     }
 
@@ -132,7 +139,27 @@ static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
     return status;
 }
 
-static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t repeats)
+static void stack_push (macro_id_t macro_id, uint32_t repeats, vfs_file_t *file, size_t pos, size_t pos_return, bool pstack)
+{
+    macro_stack_entry_t *stack;
+
+    if(stack_idx == -1) {
+        on_macro_return = grbl.on_macro_return;
+        grbl.on_macro_return = macro_exit;
+    }
+
+    stack = &macro[++stack_idx];
+    stack->id = macro_id;
+    stack->repeats = repeats;
+    stack->file = file;
+    stack->pos = pos;
+    stack->pos_return = pos_return;
+#if NGC_PARAMETERS_ENABLE
+    stack->parameter_stack = pstack;
+#endif
+}
+
+static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t repeats, bool pstack)
 {
     vfs_file_t *file;
 
@@ -150,15 +177,7 @@ static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t 
         if((file = stream_redirect_read(filename, onG65MacroError, onG65MacroEOF)) == NULL)
             return Status_FileOpenFailed;
 
-        if(stack_idx == -1) {
-            on_macro_return = grbl.on_macro_return;
-            grbl.on_macro_return = macro_exit;
-        }
-
-        stack_idx++;
-        macro[stack_idx].file = file;
-        macro[stack_idx].id = macro_id;
-        macro[stack_idx].repeats = repeats;
+        stack_push(macro_id, repeats, hal.stream.file, 0, 0, pstack);
     }
 
     return Status_Handled;
@@ -178,17 +197,31 @@ static status_code_t macro_execute (macro_id_t macro_id, parameter_words_t args,
 
     if(macro_id >= 100) {
 
-        char filename[32];
+        size_t pos;
+
+        if(args.$ && (pos = gc_macro_get_pos(macro_id, hal.stream.file))) {
+
+            if(stack_idx >= (MACRO_STACK_DEPTH - 1))
+                return Status_FlowControlStackOverflow;
+
+            stack_push(macro_id, repeats, hal.stream.file, pos, vfs_tell(hal.stream.file), false);
+            vfs_seek(hal.stream.file, pos);
+
+            status = Status_Handled;
+
+        } else {
+            char filename[32];
 
 #if LITTLEFS_ENABLE == 1
-        sprintf(filename, "/littlefs/P%d.macro", macro_id);
+            sprintf(filename, "/littlefs/P%d.macro", macro_id);
 
-        if((status = macro_start(filename, macro_id, repeats)) != Status_Handled)
+            if((status = macro_start(filename, macro_id, repeats, !args.$)) != Status_Handled)
 #endif
-        {
-            sprintf(filename, "/P%d.macro", macro_id);
+            {
+                sprintf(filename, "/P%d.macro", macro_id);
 
-            status = macro_start(filename, macro_id, repeats);
+                status = macro_start(filename, macro_id, repeats, !args.$);
+            }
         }
     }
 
@@ -209,7 +242,7 @@ static status_code_t macro_tool_change (parser_state_t *parser_state)
     if(current_tool == next_tool || (!settings.macro_atc_flags.execute_m6t0 && next_tool == 0))
         return Status_OK;
 
-    status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99, 1);
+    status_code_t status = macro_start(strcat(strcpy(filename, tc_path), "tc.macro"), 99, 1, false);
 
     return status == Status_Handled ? Status_Unhandled : status;
 }
@@ -223,7 +256,7 @@ static void macro_tool_select (tool_data_t *tool, bool next)
         tool_select(tool, next);
 
     if(hal.tool.change == macro_tool_change && tool->tool_id > 0)
-        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98, 1);
+        macro_start(strcat(strcpy(filename, tc_path), "ts.macro"), 98, 1, false);
 }
 
 // Perform a pallet shuttle.
@@ -231,7 +264,7 @@ static void macro_pallet_shuttle (void)
 {
     char filename[30];
 
-    macro_start(strcat(strcpy(filename, tc_path), "ps.macro"), 97, 1);
+    macro_start(strcat(strcpy(filename, tc_path), "ps.macro"), 97, 1, false);
 
     if(on_pallet_shuttle)
         on_pallet_shuttle();
@@ -334,7 +367,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.21");
+        report_plugin("FS macro plugin", "0.22");
 }
 
 void fs_macros_init (void)
