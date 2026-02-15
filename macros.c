@@ -66,7 +66,7 @@ static void macro_exit (void);
 
 // Ends macro execution if currently running
 // and restores normal operation.
-static bool end_macro (bool failed)
+FLASHMEM static bool end_macro (bool failed)
 {
     if(stack_idx >= 0) {
         if(macro[stack_idx].file) {
@@ -101,7 +101,7 @@ static bool end_macro (bool failed)
 }
 
 // Called on a soft reset so that normal operation can be restored.
-static void plugin_reset (void)
+FLASHMEM static void plugin_reset (void)
 {
     while(stack_idx >= 0)
         end_macro(true);
@@ -109,7 +109,7 @@ static void plugin_reset (void)
     driver_reset();
 }
 
-static status_code_t onG65MacroError (status_code_t status_code)
+FLASHMEM static status_code_t onG65MacroError (status_code_t status_code)
 {
     if(stack_idx >= 0) {
 
@@ -124,7 +124,7 @@ static status_code_t onG65MacroError (status_code_t status_code)
     return status_code;
 }
 
-static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
+FLASHMEM static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
 {
     if(stack_idx >= 0 && macro[stack_idx].file == file) {
         if(status == Status_OK) {
@@ -139,7 +139,7 @@ static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t status)
     return status;
 }
 
-static void stack_push (macro_id_t macro_id, uint32_t repeats, vfs_file_t *file, size_t pos, size_t pos_return, bool pstack)
+FLASHMEM static void stack_push (macro_id_t macro_id, uint32_t repeats, vfs_file_t *file, size_t pos, size_t pos_return, bool pstack)
 {
     macro_stack_entry_t *stack;
 
@@ -159,7 +159,7 @@ static void stack_push (macro_id_t macro_id, uint32_t repeats, vfs_file_t *file,
 #endif
 }
 
-static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t repeats, bool pstack)
+FLASHMEM static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t repeats, bool pstack)
 {
     vfs_file_t *file;
 
@@ -183,7 +183,7 @@ static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t 
     return Status_Handled;
 }
 
-static void macro_exit (void)
+FLASHMEM static void macro_exit (void)
 {
     if(stack_idx >= 0)
         end_macro(false);
@@ -191,7 +191,7 @@ static void macro_exit (void)
         on_macro_return();
 }
 
-static status_code_t macro_execute (macro_id_t macro_id, parameter_words_t args, uint32_t repeats)
+FLASHMEM static status_code_t macro_execute (macro_id_t macro_id, parameter_words_t args, uint32_t repeats)
 {
     status_code_t status = Status_Unhandled;
 
@@ -230,7 +230,7 @@ static status_code_t macro_execute (macro_id_t macro_id, parameter_words_t args,
 
 #if NGC_EXPRESSIONS_ENABLE
 
-static status_code_t macro_tool_change (parser_state_t *parser_state)
+FLASHMEM static status_code_t macro_tool_change (parser_state_t *parser_state)
 {
     char filename[30];
     int32_t current_tool = (int32_t)ngc_named_param_get_by_id(NGCParam_current_tool),
@@ -248,7 +248,7 @@ static status_code_t macro_tool_change (parser_state_t *parser_state)
 }
 
 // Set next and/or current tool. Called by gcode.c on on a Tn or M61 command (via HAL).
-static void macro_tool_select (tool_data_t *tool, bool next)
+FLASHMEM static void macro_tool_select (tool_data_t *tool, bool next)
 {
     char filename[30];
 
@@ -260,7 +260,7 @@ static void macro_tool_select (tool_data_t *tool, bool next)
 }
 
 // Perform a pallet shuttle.
-static void macro_pallet_shuttle (void)
+FLASHMEM static void macro_pallet_shuttle (void)
 {
     char filename[30];
 
@@ -270,32 +270,32 @@ static void macro_pallet_shuttle (void)
         on_pallet_shuttle();
 }
 
-static void atc_path_fix (char *path)
+FLASHMEM static void atc_path_fix (char *path)
 {
     path = strchr(path, '\0') - 1;
     if(*path != '/')
         strcat(path, "/");
 }
 
-static void macro_settings_restore (void)
+FLASHMEM static void macro_settings_restore (void)
 {
     settings.macro_atc_flags.value = 0;
 }
 
-static atc_status_t atc_get_state (void)
+FLASHMEM static atc_status_t atc_get_state (void)
 {
     return hal.tool.change == macro_tool_change // TODO: recheck for tc.macro available?
             ? ATC_Online
             : (settings.macro_atc_flags.error_on_no_macro ? ATC_Offline : ATC_None);
 }
 
-static void atc_check (void *data)
+FLASHMEM static void atc_check (void *data)
 {
     if(settings.macro_atc_flags.error_on_no_macro)
         hal.tool.atc_get_state = atc_get_state;
 }
 
-static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t mode)
+FLASHMEM static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t mode)
 {
     static bool select_claimed = false;
 
@@ -334,7 +334,7 @@ static void atc_macros_attach (const char *path, const vfs_t *fs, vfs_st_mode_t 
         on_vfs_mount(path, fs, mode);
 }
 
-static void atc_macros_detach (const char *path)
+FLASHMEM static void atc_macros_detach (const char *path)
 {
     char tc_path[15];
 
@@ -362,7 +362,7 @@ static void atc_macros_detach (const char *path)
 #endif // NGC_EXPRESSIONS_ENABLE
 
 // Add info about our plugin to the $I report.
-static void report_options (bool newopt)
+FLASHMEM static void report_options (bool newopt)
 {
     on_report_options(newopt);
 
@@ -370,7 +370,7 @@ static void report_options (bool newopt)
         report_plugin("FS macro plugin", "0.22");
 }
 
-void fs_macros_init (void)
+FLASHMEM void fs_macros_init (void)
 {
     if(on_report_options)
         return;

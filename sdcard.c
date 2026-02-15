@@ -82,7 +82,7 @@ DWORD fatfs_getFatTime (void)
 }
 #endif
 
-static bool sdcard_mount (void)
+FLASHMEM static bool sdcard_mount (void)
 {
     static FATFS *fs = NULL;
 
@@ -125,7 +125,7 @@ static bool sdcard_mount (void)
     return fatfs != NULL;
 }
 
-static void sdcard_auto_mount (void *data)
+FLASHMEM static void sdcard_auto_mount (void *data)
 {
     if(fatfs == NULL && !sdcard_mount())
         report_message("SD card automount failed", Message_Info);
@@ -152,19 +152,19 @@ static bool sdcard_unmount (void)
     return fatfs == NULL;
 }
 
-static status_code_t sd_cmd_mount (sys_state_t state, char *args)
+FLASHMEM static status_code_t sd_cmd_mount (sys_state_t state, char *args)
 {
     return sdcard_mount() ? Status_OK : Status_SDMountError;
 }
 
-static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
+FLASHMEM static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
 {
     return fatfs ? (sdcard_unmount() ? Status_OK : Status_SDMountError) : Status_SDNotMounted;
 }
 
 #if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
 
-static status_code_t sd_cmd_format (sys_state_t state, char *args)
+FLASHMEM static status_code_t sd_cmd_format (sys_state_t state, char *args)
 {
     status_code_t status = Status_InvalidStatement;
 
@@ -191,7 +191,7 @@ static status_code_t sd_cmd_format (sys_state_t state, char *args)
 
 #endif
 
-static void sd_detect (void *mount)
+FLASHMEM static void sd_detect (void *mount)
 {
     if((uint32_t)mount == 0)
         sdcard_unmount();
@@ -216,7 +216,7 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
         on_realtime_report(stream_write, report);
 }
 
-static void sd_detect_pin (xbar_t *pin, void *data)
+FLASHMEM static void sd_detect_pin (xbar_t *pin, void *data)
 {
     if(pin->id == Input_SdCardDetect) {
         sd_detectable = true;
@@ -225,7 +225,7 @@ static void sd_detect_pin (xbar_t *pin, void *data)
     }
 }
 
-static void onSettingsChanged (settings_t *settings, settings_changed_flags_t changed)
+FLASHMEM static void onSettingsChanged (settings_t *settings, settings_changed_flags_t changed)
 {
     static bool mount_attempted = false; // in case some other code hooked into hal.settings_changed
 
@@ -237,7 +237,7 @@ static void onSettingsChanged (settings_t *settings, settings_changed_flags_t ch
     }
 }
 
-static bool onDriverSetup (settings_t *settings)
+FLASHMEM static bool onDriverSetup (settings_t *settings)
 {
     bool ok;
 
@@ -253,7 +253,7 @@ static bool onDriverSetup (settings_t *settings)
 }
 
 // Attempt early mount before other clients access a shared SPI bus.
-void sdcard_early_mount (void)
+FLASHMEM void sdcard_early_mount (void)
 {
     if(detect_pin == NULL || detect_pin->get_value(detect_pin) == 0.0f) {
         driver_setup = hal.driver_setup;
@@ -261,7 +261,7 @@ void sdcard_early_mount (void)
     }
 }
 
-static void onReportOptions (bool newopt)
+FLASHMEM static void onReportOptions (bool newopt)
 {
     on_report_options(newopt);
 
@@ -271,7 +271,7 @@ static void onReportOptions (bool newopt)
         report_plugin("SDCARD", "1.26");
 }
 
-sdcard_events_t *sdcard_init (void)
+FLASHMEM sdcard_events_t *sdcard_init (void)
 {
     PROGMEM static const sys_command_t sdcard_command_list[] = {
         {"FM", sd_cmd_mount, { .noargs = On }, { .str = "mount SD card" } },
@@ -312,7 +312,7 @@ sdcard_events_t *sdcard_init (void)
     return &sdcard;
 }
 
-FATFS *sdcard_getfs (void)
+FLASHMEM FATFS *sdcard_getfs (void)
 {
     if(fatfs == NULL)
         sdcard_mount();

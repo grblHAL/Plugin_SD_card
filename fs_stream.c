@@ -223,7 +223,7 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
     return res;
 }
 
-static void file_close (void)
+FLASHMEM static void file_close (void)
 {
     if(file.handle) {
         vfs_close(file.handle);
@@ -233,7 +233,7 @@ static void file_close (void)
     }
 }
 
-static bool file_open (char *filename)
+FLASHMEM static bool file_open (char *filename)
 {
     if(file.handle)
         file_close();
@@ -256,7 +256,7 @@ static bool file_open (char *filename)
     return file.handle != NULL;
 }
 
-static void file_rewind (void)
+FLASHMEM static void file_rewind (void)
 {
     vfs_seek(file.handle, 0);
     file.pos = file.line = file.eol = 0;
@@ -279,7 +279,7 @@ static int16_t file_read (void)
     return (int16_t)*c;
 }
 
-static status_code_t list_files (bool filtered)
+FLASHMEM static status_code_t list_files (bool filtered)
 {
     char path[MAX_PATHLEN] = "", name[BUFLEN]; // NB! also used as work area when recursing directories
 
@@ -288,7 +288,7 @@ static status_code_t list_files (bool filtered)
     return fs.mounted ? (scan_dir(path, settings.fs_options.hierarchical_listing ? 0 : 10, name, filtered) == 0 ? Status_OK : Status_FsFailedOpenDir) : Status_FsNotMounted;
 }
 
-static void stream_end_job (bool flush)
+FLASHMEM static void stream_end_job (bool flush)
 {
     file_close();
 
@@ -402,12 +402,12 @@ static status_code_t trap_status_messages (status_code_t status_code)
     return status_code;
 }
 
-static void sdcard_restart_msg (void *data)
+FLASHMEM static void sdcard_restart_msg (void *data)
 {
     grbl.report.feedback_message(Message_CycleStartToRerun);
 }
 
-static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
+FLASHMEM static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
 {
     if(file.scan_subs) {
         if(!hal.stream.state.m98_macro_prescan && !(hal.stream.state.m98_macro_prescan = program_flow == ProgramFlow_CompletedM2 || program_flow == ProgramFlow_CompletedM30)) {
@@ -452,7 +452,7 @@ ISR_CODE static bool ISR_FUNC(await_toolchange_ack)(uint8_t c)
     return true;
 }
 
-static bool stream_suspend (bool suspend)
+FLASHMEM static bool stream_suspend (bool suspend)
 {
     if(suspend) {
         hal.stream.read = stream_get_null;                              // Set read function to return empty,
@@ -466,7 +466,7 @@ static bool stream_suspend (bool suspend)
     return true;
 }
 
-static void terminate_job (void *data)
+FLASHMEM static void terminate_job (void *data)
 {
     if(state_get() == STATE_CYCLE) {
         // Halt motion so that executing stop does not result in loss of position
@@ -499,7 +499,7 @@ static bool check_input_stream (uint8_t c)
     return ok;
 }
 
-static void stream_changed (stream_type_t type)
+FLASHMEM static void stream_changed (stream_type_t type)
 {
     if(type != StreamType_File && file.handle != NULL) {
 
@@ -527,7 +527,7 @@ static void stream_changed (stream_type_t type)
         on_stream_changed(type);
 }
 
-status_code_t stream_file (sys_state_t state, char *fname)
+FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
 {
     vfs_stat_t st;
     status_code_t retval = Status_Unhandled;
@@ -587,7 +587,7 @@ status_code_t stream_file (sys_state_t state, char *fname)
     return retval;
 }
 
-static status_code_t cmd_file_filtered (sys_state_t state, char *args)
+FLASHMEM static status_code_t cmd_file_filtered (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
@@ -602,7 +602,7 @@ static status_code_t cmd_file_filtered (sys_state_t state, char *args)
     return retval;
 }
 
-static status_code_t cmd_file_all (sys_state_t state, char *args)
+FLASHMEM static status_code_t cmd_file_all (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
@@ -617,14 +617,14 @@ static status_code_t cmd_file_all (sys_state_t state, char *args)
     return retval;
 }
 
-static status_code_t cmd_rewind (sys_state_t state, char *args)
+FLASHMEM static status_code_t cmd_rewind (sys_state_t state, char *args)
 {
     frewind = true;
 
     return Status_OK;
 }
 
-static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
+FLASHMEM static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
@@ -659,7 +659,7 @@ static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
     return retval;
 }
 
-static status_code_t cmd_unlink (sys_state_t state, char *args)
+FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
@@ -675,7 +675,7 @@ static status_code_t cmd_unlink (sys_state_t state, char *args)
     return retval;
 }
 
-static void onReset (void)
+FLASHMEM static void onReset (void)
 {
     if(hal.stream.type == StreamType_File && active_stream.type != StreamType_Null) {
         if(file.line > 0) {
@@ -712,7 +712,7 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
         on_realtime_report(stream_write, report);
 }
 
-static void onReportOptions (bool newopt)
+FLASHMEM static void onReportOptions (bool newopt)
 {
     if(on_report_options)
         on_report_options(newopt);
@@ -732,7 +732,7 @@ static void onReportOptions (bool newopt)
         report_plugin("FS stream", "1.04");
 }
 
-static void onFsUnmount (const char *path)
+FLASHMEM static void onFsUnmount (const char *path)
 {
     if(path[0] == '/' && path[1] == '\0')
         fs.mounted = false;
@@ -741,7 +741,7 @@ static void onFsUnmount (const char *path)
         on_vfs_unmount(path);
 }
 
-static void onFsMount (const char *path, const vfs_t *vfs, vfs_st_mode_t mode)
+FLASHMEM static void onFsMount (const char *path, const vfs_t *vfs, vfs_st_mode_t mode)
 {
     if(path[0] == '/' && path[1] == '\0') {
 
@@ -762,7 +762,7 @@ static void onFsMount (const char *path, const vfs_t *vfs, vfs_st_mode_t mode)
         on_vfs_mount(path, vfs, mode);
 }
 
-void fs_stream_init (void)
+FLASHMEM void fs_stream_init (void)
 {
     PROGMEM static const sys_command_t sdcard_command_list[] = {
         {"F", cmd_file_filtered, {}, {
