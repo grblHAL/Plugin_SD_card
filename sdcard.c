@@ -255,11 +255,11 @@ FLASHMEM static bool onDriverSetup (settings_t *settings)
 // Attempt early mount before other clients access a shared SPI bus.
 FLASHMEM void sdcard_early_mount (void)
 {
-    if(hal.driver_setup == onDriverSetup)
-        return; // already hooked
     if(detect_pin == NULL || detect_pin->get_value(detect_pin) == 0.0f) {
-        driver_setup = hal.driver_setup;
-        hal.driver_setup = onDriverSetup;
+        if (driver_setup == NULL){ //has not been called
+			driver_setup = hal.driver_setup;
+			hal.driver_setup = onDriverSetup;
+		}
     }
 }
 
