@@ -172,14 +172,14 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
         if(vfs_errno)
             break;
 
-        subdirs |= depth > 0 && dirent->st_mode.directory;
+        subdirs |= depth > 0 && dirent->st_mode.directory && !dirent->st_mode.hidden;
 
-        if(!dirent->st_mode.directory && (status = filtered ? allowed(dirent->name, true) : filename_valid(dirent->name)) != Filename_Filtered) {
+        if(!(dirent->st_mode.directory || dirent->st_mode.hidden) && (status = filtered ? allowed(dirent->name, true) : filename_valid(dirent->name)) != Filename_Filtered) {
             if(snprintf(buf, BUFLEN, "[FILE:%s%s%s|SIZE:" UINT32FMT "%s]" ASCII_EOL, path, add_sep ? "/" : "", dirent->name, (uint32_t)dirent->size, status == Filename_Invalid ? "|UNUSABLE" : "") < BUFLEN)
                 hal.stream.write(buf);
         }
 
-        if(depth == 0 && dirent->st_mode.directory && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
+        if(depth == 0 && dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
             hal.stream.write(buf);
     }
 
@@ -197,10 +197,10 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
     // Pass 2: Scan directories
     while(subdirs) {
 
-        if((dirent = vfs_readdir(dir)) == NULL || dirent->name[0] == '\0')
+        if((dirent = vfs_readdir(dir)) == NULL || *dirent->name == '\0')
             break;
 
-        if(dirent->st_mode.directory) {
+        if(dirent->st_mode.directory && !dirent->st_mode.hidden) {
 
             size_t pathlen = strlen(path);
             if(pathlen + strlen(dirent->name) >= (MAX_PATHLEN - 1))
@@ -659,6 +659,34 @@ FLASHMEM static status_code_t sd_cmd_to_output (sys_state_t state, char *args)
     return retval;
 }
 
+FLASHMEM static status_code_t cmd_cwd (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if(args) {
+
+        vfs_stat_t st;
+
+        if(vfs_stat(args, &st) == 0 && st.st_mode.directory)
+            retval = vfs_chdir(args) ? Status_FSDirNotFound : Status_OK;
+        else
+            retval = Status_FSDirNotFound;
+    } else {
+
+        char *cwd;
+
+        if((cwd = vfs_getcwd(NULL, 0))) {
+            hal.stream.write("[CWD:");
+            hal.stream.write(cwd);
+            hal.stream.write("]" ASCII_EOL);
+            free(cwd);
+        }
+        retval = Status_OK;
+    }
+
+    return retval;
+}
+
 FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
@@ -729,7 +757,7 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.04");
+        report_plugin("FS stream", "1.05");
 }
 
 FLASHMEM static void onFsUnmount (const char *path)
@@ -775,6 +803,8 @@ FLASHMEM void fs_stream_init (void)
         {"FD", cmd_unlink, {}, { .str = "$FD=<filename> - delete file" } },
     #endif
         {"F<", sd_cmd_to_output, {}, { .str = "$F<=<filename> - dump file to output" } },
+        {"CWD", cmd_cwd, {}, { .str = "$CWD=<path> - set current working directory" } },
+        {"PWD", cmd_cwd, { .noargs = On }, { .str = "output current working directory" } }
     };
 
     static sys_commands_t sdcard_commands = {

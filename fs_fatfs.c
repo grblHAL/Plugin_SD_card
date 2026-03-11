@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022-2024 Terje Io
+  Copyright (c) 2022-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -55,7 +55,7 @@
 #define _MAX_LFN FF_MAX_LFN
 #endif
 
-static inline char *get_name (FILINFO *file)
+FLASHMEM static inline char *get_name (FILINFO *file)
 {
 #if _USE_LFN
     return *file->lfname == '\0' ? file->fname : file->lfname;
@@ -64,7 +64,7 @@ static inline char *get_name (FILINFO *file)
 #endif
 }
 
-static vfs_file_t *fs_open (const char *filename, const char *mode)
+FLASHMEM static vfs_file_t *fs_open (const char *filename, const char *mode)
 {
     BYTE flags = 0;
     vfs_file_t *file = malloc(sizeof(vfs_file_t) + sizeof(FIL));
@@ -94,7 +94,7 @@ static vfs_file_t *fs_open (const char *filename, const char *mode)
     return file;
 }
 
-static void fs_close (vfs_file_t *file)
+FLASHMEM static void fs_close (vfs_file_t *file)
 {
     f_close((FIL *)&file->handle);
     free(file);
@@ -120,7 +120,7 @@ static size_t fs_write (const void *buffer, size_t size, size_t count, vfs_file_
     return byteswritten;
 }
 
-static size_t fs_tell (vfs_file_t *file)
+FLASHMEM static size_t fs_tell (vfs_file_t *file)
 {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
@@ -130,12 +130,12 @@ static size_t fs_tell (vfs_file_t *file)
 #pragma GCC diagnostic pop
 }
 
-static int fs_seek (vfs_file_t *file, size_t offset)
+FLASHMEM static int fs_seek (vfs_file_t *file, size_t offset)
 {
     return f_lseek((FIL *)&file->handle, offset);
 }
 
-static bool fs_eof (vfs_file_t *file)
+FLASHMEM static bool fs_eof (vfs_file_t *file)
 {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
@@ -145,7 +145,7 @@ static bool fs_eof (vfs_file_t *file)
 #pragma GCC diagnostic pop
 }
 
-static int fs_rename (const char *from, const char *to)
+FLASHMEM static int fs_rename (const char *from, const char *to)
 {
 #if FF_FS_READONLY
     return -1;
@@ -154,7 +154,7 @@ static int fs_rename (const char *from, const char *to)
 #endif
 }
 
-static int fs_unlink (const char *filename)
+FLASHMEM static int fs_unlink (const char *filename)
 {
 #if FF_FS_READONLY
     return -1;
@@ -163,7 +163,7 @@ static int fs_unlink (const char *filename)
 #endif
 }
 
-static int fs_mkdir (const char *path)
+FLASHMEM static int fs_mkdir (const char *path)
 {
 #if FF_FS_READONLY
     return -1;
@@ -172,19 +172,17 @@ static int fs_mkdir (const char *path)
 #endif
 }
 
-static int fs_chdir (const char *path)
-{
 #if FF_FS_RPATH
+
+FLASHMEM static int fs_chdir (const char *path)
+{
     return f_chdir(path);
-#else
-    return -1;
-#endif
 }
 
-static char *fs_getcwd (char *buf, size_t size)
+FLASHMEM static char *fs_getcwd (char *buf, size_t size)
 {
     static char cwd[255];
-#if FF_FS_RPATH
+
     if ((vfs_errno = f_getcwd(cwd, 255)) == FR_OK) {
         char *s1, *s2;
         // Strip drive information
@@ -196,18 +194,17 @@ static char *fs_getcwd (char *buf, size_t size)
             *s1 = '\0';
         }
     }
-#else
-    *cwd = '\0'; // TODO: return mount path?
-#endif
 
     return cwd;
 }
 
-static vfs_dir_t *fs_opendir (const char *path)
+#endif
+
+FLASHMEM static vfs_dir_t *fs_opendir (const char *path)
 {
     vfs_dir_t *dir = malloc(sizeof(vfs_dir_t) + sizeof(FF_DIR));
 
-    if (dir && (vfs_errno = f_opendir((FF_DIR *)&dir->handle, path)) != FR_OK)
+    if(dir && (vfs_errno = f_opendir((FF_DIR *)&dir->handle, path)) != FR_OK)
     {
         free(dir);
         dir = NULL;
@@ -216,7 +213,7 @@ static vfs_dir_t *fs_opendir (const char *path)
     return dir;
 }
 
-static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
+FLASHMEM static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
 {
     static FILINFO fi;
 
@@ -231,14 +228,15 @@ static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
 
     *dirent->name = '\0';
 
-    if ((vfs_errno = f_readdir((FF_DIR *)&dir->handle, &fi)) != FR_OK || *fi.fname == '\0')
+    if((vfs_errno = f_readdir((FF_DIR *)&dir->handle, &fi)) != FR_OK || *fi.fname == '\0')
         return NULL;
 
-    if(!strcmp(fi.fname, "System Volume Information") && ((vfs_errno = f_readdir((FF_DIR *)&dir->handle, &fi)) != FR_OK || *fi.fname == '\0'))
-        return NULL;
+    while(((vfs_st_mode_t)fi.fattrib).system || strlen(fi.fname) >= sizeof(dirent->name) - 1) {
+        if((vfs_errno = f_readdir((FF_DIR *)&dir->handle, &fi)) != FR_OK || *fi.fname == '\0')
+            return NULL;
+    }
 
-    if(*fi.fname != '\0')
-        strcpy(dirent->name, fi.fname);
+    strcpy(dirent->name, fi.fname);
 
     dirent->size = fi.fsize;
     dirent->st_mode.mode = fi.fattrib;
@@ -246,7 +244,7 @@ static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
     return fi.fname;
 }
 
-static void fs_closedir (vfs_dir_t *dir)
+FLASHMEM static void fs_closedir (vfs_dir_t *dir)
 {
     if (dir) {
         vfs_errno = f_closedir((FF_DIR *)&dir->handle);
@@ -260,23 +258,30 @@ static void fs_closedir (vfs_dir_t *dir)
 
 #if FF_FS_READONLY == 0 && FF_USE_CHMOD == 1
 
-static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
+FLASHMEM static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
 {
     return (vfs_errno = f_chmod(filename, attr.mode, mask.mode)) == FR_OK ? 0 : -1;
 }
 
 #endif
 
-static int fs_stat (const char *filename, vfs_stat_t *st)
+FLASHMEM static int fs_stat (const char *filename, vfs_stat_t *st)
 {
     FILINFO f;
 #if _USE_LFN
     f.lfname = NULL;
 #endif
 
-    if ((vfs_errno = f_stat(filename, &f)) == FR_OK) {
+    if(!strcmp(filename, "/")) { // FatFS bug workaround
+        vfs_errno = 0;
+        memset(st, 0, sizeof(vfs_stat_t));
+        st->st_mode.directory = On;
+    } else if((vfs_errno = f_stat(filename, &f)) == FR_OK) {
         st->st_size = f.fsize;
         st->st_mode.mode = f.fattrib;
+    }
+
+    if(vfs_errno == 0) {
         struct tm tm  = {
             .tm_sec  = (f.ftime & 0x1f) << 1,
             .tm_min  = (f.ftime >> 5) & 0x3f,
@@ -290,13 +295,12 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
 #else
         st->st_mtime = mktime(&tm);
 #endif
-    } else
-        return -1;
+    }
 
-    return 0;
+    return vfs_errno ? -1 : 0;
 }
 
-static int fs_utime (const char *filename, struct tm *modified)
+FLASHMEM static int fs_utime (const char *filename, struct tm *modified)
 {
 #if FF_FS_READONLY == 0 && FF_USE_CHMOD == 1
 
@@ -311,7 +315,7 @@ static int fs_utime (const char *filename, struct tm *modified)
 #endif
 }
 
-static bool fs_getfree (vfs_free_t *free)
+FLASHMEM static bool fs_getfree (vfs_free_t *free)
 {
 #if FF_FS_READONLY
     return false;
@@ -331,7 +335,7 @@ static bool fs_getfree (vfs_free_t *free)
 }
 
 #if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
-static int fs_format (void)
+FLASHMEM static int fs_format (void)
 {
     void *work = malloc(FF_MAX_SS);
 
@@ -348,7 +352,7 @@ static int fs_format (void)
 }
 #endif
 
-void fs_fatfs_mount (const char *path)
+FLASHMEM void fs_fatfs_mount (const char *path)
 {
     PROGMEM static const vfs_t fs = {
         .fs_name = "FatFs",
@@ -363,7 +367,9 @@ void fs_fatfs_mount (const char *path)
         .frename = fs_rename,
         .funlink = fs_unlink,
         .fmkdir = fs_mkdir,
+#if FF_FS_RPATH
         .fchdir = fs_chdir,
+#endif
         .frmdir = fs_unlink,
         .fopendir = fs_opendir,
         .readdir = fs_readdir,
@@ -373,7 +379,9 @@ void fs_fatfs_mount (const char *path)
 #endif
         .fstat = fs_stat,
         .futime = fs_utime,
+#if FF_FS_RPATH
         .fgetcwd = fs_getcwd,
+#endif
         .fgetfree = fs_getfree,
 #if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
         .format = fs_format

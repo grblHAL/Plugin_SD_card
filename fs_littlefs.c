@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022-2025 Terje Io
+  Copyright (c) 2022-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -50,10 +50,10 @@ typedef struct time_file {
 
 static lfs_t lfs = {0};
 static bool is_rootfs;
-static char cwd[100] = "";
+static char cwd[100] = "/";
 static const struct lfs_config *lfs_config;
 
-static char *get_path (const char *filename)
+FLASHMEM static char *get_path (const char *filename)
 {
     static char path[120];
 
@@ -61,12 +61,12 @@ static char *get_path (const char *filename)
         return (char *)filename;
 
     if(*filename != '/')
-       strcat(strcpy(path, cwd), filename);
+       strcat(strcpy(path, strcat(cwd + 1, "/")), filename);
 
     return *filename == '/' ? (char *)filename : path;
 }
 
-static vfs_file_t *fs_open (const char *filename, const char *mode)
+FLASHMEM static vfs_file_t *fs_open (const char *filename, const char *mode)
 {
     int flags = 0;
     vfs_file_t *file = malloc(sizeof(vfs_file_t) + sizeof(time_file_t));
@@ -116,7 +116,7 @@ static vfs_file_t *fs_open (const char *filename, const char *mode)
     return file;
 }
 
-static void fs_close (vfs_file_t *file)
+FLASHMEM static void fs_close (vfs_file_t *file)
 {
     time_file_t *f = (time_file_t *)&file->handle;
 
@@ -144,17 +144,17 @@ static size_t fs_write (const void *buffer, size_t size, size_t count, vfs_file_
     return lfs_file_write(&lfs, &f->file, buffer, size * count);
 }
 
-static size_t fs_tell (vfs_file_t *file)
+FLASHMEM static size_t fs_tell (vfs_file_t *file)
 {
     return lfs_file_tell(&lfs, &((time_file_t *)&file->handle)->file);
 }
 
-static int fs_seek (vfs_file_t *file, size_t offset)
+FLASHMEM static int fs_seek (vfs_file_t *file, size_t offset)
 {
     return lfs_file_seek(&lfs, &((time_file_t *)&file->handle)->file, offset, LFS_SEEK_SET);
 }
 
-static bool fs_eof (vfs_file_t *file)
+FLASHMEM static bool fs_eof (vfs_file_t *file)
 {
     return lfs_file_tell(&lfs, &((time_file_t *)&file->handle)->file) == file->size;
 }
@@ -164,7 +164,7 @@ static int fs_rename (const char *from, const char *to)
     return lfs_rename(&lfs, from, to);
 }
 
-static int fs_unlink (const char *filename)
+FLASHMEM static int fs_unlink (const char *filename)
 {
     vfs_stat_t st = {};
 
@@ -173,7 +173,7 @@ static int fs_unlink (const char *filename)
     return st.st_mode.read_only ? -1 : lfs_remove(&lfs, get_path(filename));
 }
 
-static int fs_mkdir (const char *path)
+FLASHMEM static int fs_mkdir (const char *path)
 {
     int res;
 
@@ -188,17 +188,16 @@ static int fs_mkdir (const char *path)
     return res;
 }
 
-static char *fs_getcwd (char *buf, size_t size)
+FLASHMEM static char *fs_getcwd (char *buf, size_t size)
 {
     return cwd;
 }
 
-static vfs_dir_t *fs_opendir (const char *path)
+FLASHMEM static vfs_dir_t *fs_opendir (const char *path)
 {
-    vfs_dir_t *dir = malloc(sizeof(vfs_dir_t) + sizeof(lfs_dir_t));
+    vfs_dir_t *dir = calloc(sizeof(vfs_dir_t) + sizeof(lfs_dir_t), 1);
 
-    if (dir && (vfs_errno = lfs_dir_open(&lfs, (lfs_dir_t *)&dir->handle, path)) != LFS_ERR_OK)
-    {
+    if (dir && (vfs_errno = lfs_dir_open(&lfs, (lfs_dir_t *)&dir->handle, path)) != LFS_ERR_OK) {
         free(dir);
         dir = NULL;
     }
@@ -206,7 +205,7 @@ static vfs_dir_t *fs_opendir (const char *path)
     return dir;
 }
 
-static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
+FLASHMEM static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
 {
     static struct lfs_info f;
 
@@ -227,12 +226,13 @@ static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
     vfs_errno = 0;
     dirent->size = f.size;
     dirent->st_mode.mode = 0;
-    dirent->st_mode.directory = f.type == LFS_TYPE_DIR;
+    if(!(dirent->st_mode.directory = f.type == LFS_TYPE_DIR))
+        lfs_getattr(&lfs, f.name, ATTR_MODE, &dirent->st_mode.mode, sizeof(vfs_st_mode_t));
 
     return *f.name ? dirent->name : NULL;
 }
 
-static void fs_closedir (vfs_dir_t *dir)
+FLASHMEM static void fs_closedir (vfs_dir_t *dir)
 {
     if (dir) {
         vfs_errno = lfs_dir_close(&lfs, (lfs_dir_t *)&dir->handle);
@@ -240,7 +240,7 @@ static void fs_closedir (vfs_dir_t *dir)
     }
 }
 
-static int fs_stat (const char *filename, vfs_stat_t *st)
+FLASHMEM static int fs_stat (const char *filename, vfs_stat_t *st)
 {
     struct lfs_info f;
 
@@ -252,7 +252,7 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
         if(!(st->st_mode.directory = f.type == LFS_TYPE_DIR))
             lfs_getattr(&lfs, filename, ATTR_MODE, &st->st_mode.mode, sizeof(vfs_st_mode_t));
 
-#if ESP_PLATFORM
+#ifdef ESP_PLATFORM
         if(lfs_getattr(&lfs, filename, ATTR_TIMESTAMP, &st->st_mtim, sizeof(time_t)) != sizeof(time_t))
             st->st_mtim = (time_t)0;
 #else
@@ -265,22 +265,18 @@ static int fs_stat (const char *filename, vfs_stat_t *st)
     return 0;
 }
 
-static int fs_chdir (const char *path)
+FLASHMEM static int fs_chdir (const char *path)
 {
     int errno = 0;
     vfs_stat_t st;
 
-    path = get_path(path);
-
-    if(!strcmp(path, "/"))
-        strcpy(cwd, path);
-    else if((errno = fs_stat(path, &st)) == 0)
-        strcat(strcpy(cwd, path), "/");
+    if((errno = fs_stat(*path ? path : "/", &st)) == 0)
+        strcpy(cwd, *path ? path : "/");
 
     return errno;
 }
 
-static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
+FLASHMEM static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
 {
     vfs_stat_t st;
 
@@ -297,14 +293,14 @@ static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mas
     return vfs_errno ? -1 : 0;
 }
 
-static int fs_utime (const char *filename, struct tm *modified)
+FLASHMEM static int fs_utime (const char *filename, struct tm *modified)
 {
     time_t t = mktime(modified);
 
     return lfs_setattr(&lfs, get_path(filename), ATTR_TIMESTAMP, &t, sizeof(time_t));
 }
 
-static bool fs_getfree (vfs_free_t *free)
+FLASHMEM static bool fs_getfree (vfs_free_t *free)
 {
     free->size = lfs_config->block_count * lfs_config->block_size;
     free->used = lfs_fs_size(&lfs) * lfs_config->block_size;
@@ -312,7 +308,7 @@ static bool fs_getfree (vfs_free_t *free)
     return true;
 }
 
-static int fs_format (void)
+FLASHMEM static int fs_format (void)
 {
     int ret = lfs_format(&lfs, lfs_config);
     lfs_mount(&lfs, lfs_config);
@@ -320,7 +316,7 @@ static int fs_format (void)
     return ret;
 }
 
-void fs_littlefs_mount (const char *path, const struct lfs_config *config)
+FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 {
     PROGMEM static const vfs_t littlefs = {
         .fs_name = "littlefs",
