@@ -181,6 +181,8 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
 
         if(depth == 0 && dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
             hal.stream.write(buf);
+
+        grbl.on_execute_realtime(state_get());
     }
 
     int err = vfs_errno;
@@ -215,6 +217,8 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
 
             path[pathlen] = '\0';
         }
+
+        grbl.on_execute_realtime(state_get());
     }
 
     if(dir)
@@ -757,7 +761,7 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.05");
+        report_plugin("FS stream", "1.06");
 }
 
 FLASHMEM static void onFsUnmount (const char *path)
