@@ -77,7 +77,7 @@ typedef struct
     char name[50];
     size_t size;
     size_t pos;
-    uint32_t line;
+    line_number_t line_number;
     uint8_t eol;
     bool scan_subs;
 } file_t;
@@ -102,6 +102,7 @@ static on_program_completed_ptr on_program_completed;
 static enqueue_realtime_command_ptr enqueue_realtime_command;
 static on_report_options_ptr on_report_options;
 static on_stream_changed_ptr on_stream_changed;
+static on_line_number_assigned_ptr on_line_number_assigned = NULL;
 static stream_read_ptr read_redirected;
 static status_message_ptr status_message = NULL;
 static on_vfs_mount_ptr on_vfs_mount;
@@ -111,6 +112,7 @@ static void onCycleStart (void);
 static void stream_end_job (bool flush);
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report);
 static status_code_t trap_status_messages (status_code_t status_code);
+static line_number_t onLineNumberAssigned (line_number_t line_number);
 static void onProgramCompleted (program_flow_t program_flow, bool check_mode);
 //static report_t active_reports;
 
@@ -251,7 +253,8 @@ FLASHMEM static bool file_open (char *filename)
 
         file.handle = cncfile;
         file.size = st.st_size;
-        file.pos = file.line = file.eol = 0;
+        file.pos = file.eol = 0;
+        file.line_number = 1;
         file.scan_subs = false;
         char *leafname = strrchr(filename, '/');
         strncpy(file.name, leafname ? leafname + 1 : filename, sizeof(file.name));
@@ -264,24 +267,28 @@ FLASHMEM static bool file_open (char *filename)
 FLASHMEM static void file_rewind (void)
 {
     vfs_seek(file.handle, 0);
-    file.pos = file.line = file.eol = 0;
+    file.pos = file.eol = 0;
+    file.line_number = 1;
 }
 
 static int16_t file_read (void)
 {
-    signed char c[1];
+    signed char c;
 
     if(vfs_read(&c, 1, 1, file.handle) == 1)
         file.pos = vfs_tell(file.handle);
     else
-        *c = -1;
+        c = SERIAL_NO_DATA;
 
-    if(*c == '\r' || *c == '\n')
-        file.eol++;
-    else
+    if(c == ASCII_CR || c == ASCII_LF) {
+        if(file.eol && c != file.eol)
+            c = file_read();
+        else
+            file.eol = c;
+    } else
         file.eol = 0;
 
-    return (int16_t)*c;
+    return (int16_t)c;
 }
 
 FLASHMEM static status_code_t list_files (bool filtered)
@@ -299,6 +306,11 @@ FLASHMEM static void stream_end_job (bool flush)
 
     if(grbl.on_program_completed == onProgramCompleted)
         grbl.on_program_completed = on_program_completed;
+
+    if(grbl.on_line_number_assigned == onLineNumberAssigned) {
+        grbl.on_line_number_assigned = on_line_number_assigned;
+        on_line_number_assigned = NULL;
+    }
 
     if(grbl.on_cycle_start == onCycleStart) {
         grbl.on_cycle_start = on_cycle_start;
@@ -332,15 +344,15 @@ static int32_t stream_read (void)
     int32_t c = SERIAL_NO_DATA;
     sys_state_t state = state_get();
 
-    if(file.eol == 1)
-        file.line++;
+    if(file.eol)
+        file.line_number++;
 
     if(file.handle) {
 
         if(state == STATE_IDLE || (state & (STATE_CYCLE|STATE_HOLD|STATE_CHECK_MODE|STATE_TOOL_CHANGE)))
             c = file_read();
 
-        if(c == -1) { // EOF, error reading or grblHAL problem
+        if(c == SERIAL_NO_DATA) { // EOF, error reading or grblHAL problem
 
             if(file.scan_subs) {
                 hal.stream.state.m98_macro_prescan = file.scan_subs = false;
@@ -350,7 +362,7 @@ static int32_t stream_read (void)
                 file_close();
 
             if(file.eol == 0) // Return newline if line was incorrectly terminated
-                c = '\n';
+                c = ASCII_LF;
         }
 
     } else if((state == STATE_IDLE || state == STATE_CHECK_MODE) && grbl.on_program_completed == onProgramCompleted) { // TODO: end on ok count match line count?
@@ -397,7 +409,7 @@ static status_code_t trap_status_messages (status_code_t status_code)
 
         // TODO: all errors should terminate job?
         char buf[50]; // TODO: check if extended error reports are permissible
-        sprintf(buf, "error:%d in SD file at line " UINT32FMT ASCII_EOL, (uint8_t)status_code, file.line);
+        sprintf(buf, "error:%d in SD file at line " UINT32FMT ASCII_EOL, (uint8_t)status_code, file.line_number);
         hal.stream.write(buf);
 
         stream_end_job(true);
@@ -410,6 +422,18 @@ static status_code_t trap_status_messages (status_code_t status_code)
 FLASHMEM static void sdcard_restart_msg (void *data)
 {
     grbl.report.feedback_message(Message_CycleStartToRerun);
+}
+
+FLASHMEM static line_number_t onLineNumberAssigned (line_number_t line_number)
+{
+    if(file.handle) {
+        if(line_number)
+            file.line_number = line_number;
+        else
+            line_number = file.line_number;
+    }
+
+    return on_line_number_assigned ? on_line_number_assigned(line_number) : line_number;
 }
 
 FLASHMEM static void onProgramCompleted (program_flow_t program_flow, bool check_mode)
@@ -567,6 +591,11 @@ FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
                 on_program_completed = grbl.on_program_completed;
                 grbl.on_program_completed = onProgramCompleted;
 
+                if(on_line_number_assigned == NULL) {
+                    on_line_number_assigned = grbl.on_line_number_assigned;
+                    grbl.on_line_number_assigned = onLineNumberAssigned;
+                }
+
                 status_message = grbl.report.status_message;                // Add trap for status messages
                 grbl.report.status_message = trap_status_messages;          // so we can terminate on errors.
 
@@ -645,12 +674,13 @@ FLASHMEM static status_code_t cmd_to_output (sys_state_t state, char *args)
                 int16_t c;
                 char buf[2] = {0};
 
-                while((c = file_read()) != -1) {
-                    if(file.eol == 0) {
+                while((c = file_read()) != SERIAL_NO_DATA) {
+                    if(file.eol)
+                        hal.stream.write(ASCII_EOL);
+                    else {
                         buf[0] = (char)c;
                         hal.stream.write(buf);
-                    } else if(file.eol == 1)
-                        hal.stream.write(ASCII_EOL);
+                    }
                 }
 
                 file_close();
@@ -766,9 +796,9 @@ FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
 FLASHMEM static void onReset (void)
 {
     if(hal.stream.type == StreamType_File && active_stream.type != StreamType_Null) {
-        if(file.line > 0) {
+        if(file.line_number) {
             char buf[70];
-            sprintf(buf, "Reset during streaming of file at line: " UINT32FMT, file.line);
+            sprintf(buf, "Reset during streaming of file at line: " UINT32FMT, file.line_number);
             report_message(buf, Message_Plain);
         } else if(frewind)
             grbl.report.feedback_message(Message_None);
@@ -817,7 +847,7 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.10");
+        report_plugin("FS stream", "1.11");
 
 }
 
@@ -924,7 +954,7 @@ stream_job_t *stream_get_job_info (void)
         strcpy(job.name, file.name);
         job.size = file.size;
         job.pos = file.pos;
-        job.line = file.line;
+        job.line_number = file.line_number;
     }
 
     return stream_is_file() ? &job : NULL;

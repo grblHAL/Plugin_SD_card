@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2018-2025 Terje Io
+  Copyright (c) 2018-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@ typedef struct
     char name[50];
     size_t size;
     size_t pos;
-    uint32_t line;
+    line_number_t line_number;
 } stream_job_t;
 
 stream_job_t *stream_get_job_info (void);

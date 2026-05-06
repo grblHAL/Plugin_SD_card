@@ -42,6 +42,7 @@ typedef struct {
     uint32_t repeats;
     vfs_file_t *file;
     size_t pos, pos_return;
+    line_number_t line_number;
 #if NGC_PARAMETERS_ENABLE
     bool parameter_stack;
 #endif
@@ -72,12 +73,12 @@ FLASHMEM static bool end_macro (bool failed)
         if(macro[stack_idx].file) {
 
             if(!failed && --macro[stack_idx].repeats) {
-                vfs_seek(macro[stack_idx].file, macro[stack_idx].pos);
+                stream_reposition(macro[stack_idx].file, macro[stack_idx].pos, macro[stack_idx].line_number);
                 return false;
             }
 
             if(macro[stack_idx].pos_return)
-                vfs_seek(macro[stack_idx].file, macro[stack_idx].pos_return);
+                stream_reposition(macro[stack_idx].file, macro[stack_idx].pos_return, macro[stack_idx].line_number);
             else
                 stream_redirect_close(macro[stack_idx].file);
 #if NGC_EXPRESSIONS_ENABLE
@@ -139,7 +140,7 @@ FLASHMEM static status_code_t onG65MacroEOF (vfs_file_t *file, status_code_t sta
     return status;
 }
 
-FLASHMEM static void stack_push (macro_id_t macro_id, uint32_t repeats, vfs_file_t *file, size_t pos, size_t pos_return, bool pstack)
+FLASHMEM static void stack_push (macro_id_t macro_id, line_number_t line_number, uint32_t repeats, vfs_file_t *file, size_t pos, size_t pos_return, bool pstack)
 {
     macro_stack_entry_t *stack;
 
@@ -150,6 +151,7 @@ FLASHMEM static void stack_push (macro_id_t macro_id, uint32_t repeats, vfs_file
 
     stack = &macro[++stack_idx];
     stack->id = macro_id;
+    stack->line_number = line_number;
     stack->repeats = repeats;
     stack->file = file;
     stack->pos = pos;
@@ -177,7 +179,7 @@ FLASHMEM static status_code_t macro_start (char *filename, macro_id_t macro_id, 
         if((file = stream_redirect_read(filename, onG65MacroError, onG65MacroEOF)) == NULL)
             return Status_FileOpenFailed;
 
-        stack_push(macro_id, repeats, hal.stream.file, 0, 0, pstack);
+        stack_push(macro_id, 0, repeats, hal.stream.file, 0, 0, pstack);
     }
 
     return Status_Handled;
@@ -191,7 +193,7 @@ FLASHMEM static void macro_exit (void)
         on_macro_return();
 }
 
-FLASHMEM static status_code_t macro_execute (macro_id_t macro_id, parameter_words_t args, uint32_t repeats)
+FLASHMEM static status_code_t macro_execute (macro_id_t macro_id, line_number_t line_number, parameter_words_t args, uint32_t repeats)
 {
     status_code_t status = Status_Unhandled;
 
@@ -204,8 +206,8 @@ FLASHMEM static status_code_t macro_execute (macro_id_t macro_id, parameter_word
             if(stack_idx >= (MACRO_STACK_DEPTH - 1))
                 return Status_FlowControlStackOverflow;
 
-            stack_push(macro_id, repeats, hal.stream.file, pos, vfs_tell(hal.stream.file), false);
-            vfs_seek(hal.stream.file, pos);
+            stack_push(macro_id, line_number, repeats, hal.stream.file, pos, vfs_tell(hal.stream.file), false);
+            stream_reposition(macro[stack_idx].file, macro[stack_idx].pos, macro[stack_idx].line_number);
 
             status = Status_Handled;
 
@@ -225,7 +227,7 @@ FLASHMEM static status_code_t macro_execute (macro_id_t macro_id, parameter_word
         }
     }
 
-    return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id, args, repeats) : status;
+    return status == Status_Unhandled && on_macro_execute ? on_macro_execute(macro_id, line_number, args, repeats) : status;
 }
 
 #if NGC_EXPRESSIONS_ENABLE
@@ -367,7 +369,7 @@ FLASHMEM static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.22");
+        report_plugin("FS macro plugin", "0.23");
 }
 
 FLASHMEM void fs_macros_init (void)
