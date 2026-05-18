@@ -8,7 +8,7 @@
   NOTE: Receiver only, does not send initial 'C' to start transfer.
         Start transfer by sending SOH or STX.
 
-  Copyright (c) 2021-2025 Terje Io
+  Copyright (c) 2021-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@ typedef enum {
 
 typedef ymodem_status_t (*process_data_ptr)(uint8_t c);
 
-typedef struct {
+static struct {
     vfs_file_t *handle;
     char filename[32];
     uint32_t filelength;
@@ -65,10 +65,13 @@ typedef struct {
     bool completed;
     bool repeated;
     uint8_t payload[1024];
-} ymodem_t;
-
-static ymodem_t ymodem;
-static stream_rx_buffer_t rx_buffer;
+} ymodem;
+static struct {
+    volatile uint_fast16_t head;
+    volatile uint_fast16_t tail;
+    bool overflow;
+    uint8_t data[2048];
+} rx_buffer;
 
 static driver_reset_ptr driver_reset;
 static on_execute_realtime_ptr on_execute_realtime;
@@ -362,7 +365,7 @@ static bool trap_initial_soh (char c)
         on_execute_realtime = grbl.on_execute_realtime;             // Add YModem protocol loop
         grbl.on_execute_realtime = protocol_loop;                   // to grblHAL foreground process
 
-        memset(&ymodem, 0, sizeof(ymodem_t));                       // Init YModem variables
+        memset(&ymodem, 0, sizeof(ymodem));                         // Init YModem variables
         ymodem.process = await_soh;
         ymodem.next_timeout = hal.get_elapsed_ticks() + 1000;
 
