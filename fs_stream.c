@@ -795,7 +795,15 @@ FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
 
 FLASHMEM static void onReset (void)
 {
-    if(hal.stream.type == StreamType_File && active_stream.type != StreamType_Null) {
+    // Tighten the guard: clean up if EITHER a file is open OR we hijacked the
+    // stream. The previous guard required hal.stream.type == StreamType_File,
+    // which fails transiently during tool-change suspend_read, on_stream_changed
+    // callbacks, and other paths that temporarily swap the stream type. When
+    // reset arrives during those windows the file handle leaks, hal.stream.read
+    // stays redirected at the file reader, and post-reset host traffic is
+    // misrouted — observed as grblHAL hangs + ioSender access violations on
+    // subsequent commands.
+    if(file.handle != NULL || active_stream.type != StreamType_Null) {
         if(file.line_number) {
             char buf[70];
             sprintf(buf, "Reset during streaming of file at line: " UINT32FMT, file.line_number);
