@@ -281,7 +281,10 @@ FLASHMEM static void atc_path_fix (char *path)
 
 FLASHMEM static void macro_settings_restore (void)
 {
-    settings.macro_atc_flags.value = 0;
+#ifndef DEFAULT_MACRO_ATC_OPTIONS
+#define DEFAULT_MACRO_ATC_OPTIONS  0
+#endif
+    settings.macro_atc_flags.value = DEFAULT_MACRO_ATC_OPTIONS;
 }
 
 FLASHMEM static atc_status_t atc_get_state (void)
