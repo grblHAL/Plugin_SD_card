@@ -279,11 +279,6 @@ FLASHMEM static void atc_path_fix (char *path)
         strcat(path, "/");
 }
 
-FLASHMEM static void macro_settings_restore (void)
-{
-    settings.macro_atc_flags.value = 0;
-}
-
 FLASHMEM static atc_status_t atc_get_state (void)
 {
     return hal.tool.change == macro_tool_change // TODO: recheck for tc.macro available?
@@ -369,7 +364,7 @@ FLASHMEM static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.23");
+        report_plugin("FS macro plugin", "0.24");
 }
 
 FLASHMEM void fs_macros_init (void)
@@ -402,7 +397,6 @@ FLASHMEM void fs_macros_init (void)
         .n_settings = sizeof(macro_settings) / sizeof(setting_detail_t),
         .descriptions = macro_settings_descr,
         .n_descriptions = sizeof(macro_settings_descr) / sizeof(setting_descr_t),
-        .restore = macro_settings_restore,
         .save = settings_write_global
     };
 
