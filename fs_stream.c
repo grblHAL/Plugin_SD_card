@@ -683,6 +683,9 @@ FLASHMEM static status_code_t cmd_to_output (sys_state_t state, char *args)
                     }
                 }
 
+                if(!file.eol)
+                    hal.stream.write(ASCII_EOL);
+
                 file_close();
                 retval = Status_OK;
             } else
@@ -737,10 +740,7 @@ FLASHMEM static status_code_t cmd_format (sys_state_t state, char *args)
         while((drive = vfs_drives_read(dh, true))) {
             if(!strcasecmp(args, *args == '/' ? drive->path : drive->name)) {
                 report_message("Formatting...", Message_Info);
-                if(vfs_drive_format(drive) == 0)
-                    status = !strcmp(drive->name, "FatFs") ? system_execute_line("$FM") : Status_OK;
-                else
-                    status = Status_FsFormatFailed;
+                status = vfs_drive_format(drive) == 0 ? Status_OK : Status_FsFormatFailed;
                 report_message("", Message_Plain);
                 break;
             }
@@ -847,7 +847,7 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.12");
+        report_plugin("FS stream", "1.13");
 
 }
 

@@ -29,10 +29,6 @@
 
 #define BUFLEN 80
 
-#if defined(ESP_PLATFORM) || defined(STM32_PLATFORM) ||  defined(__LPC17XX__) ||  defined(__IMXRT1062__) || defined(__MSP432E401Y__)
-#define NEW_FATFS
-#endif
-
 #include "grbl/report.h"
 //#include "grbl/protocol.h"
 #include "grbl/state_machine.h"
@@ -42,15 +38,11 @@
 
 #include "fs_fatfs.h"
 
-#if defined(NEW_FATFS)
-static char dev[10] = "";
-#endif
-
 // https://e2e.ti.com/support/tools/ccs/f/81/t/428524?Linking-error-unresolved-symbols-rom-h-pinout-c-
 
 /* uses fatfs - http://www.elm-chan.org/fsw/ff/00index_e.html */
 
-static FATFS *fatfs = NULL;
+static fatfs_dev_t device = {0};
 static bool mount_changed = false, realtime_report_subscribed = false, sd_detectable = false;
 static xbar_t *detect_pin = NULL;
 static sdcard_events_t sdcard;
@@ -61,41 +53,20 @@ static settings_changed_ptr settings_changed;
 
 static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report);
 
-#ifdef __MSP432E401Y__
-/*---------------------------------------------------------*/
-/* User Provided Timer Function for FatFs module           */
-/*---------------------------------------------------------*/
-/* This is a real time clock service to be called from     */
-/* FatFs module. Any valid time must be returned even if   */
-/* the system does not support a real time clock.          */
-
-DWORD fatfs_getFatTime (void)
-{
-    return    ((2007UL-1980) << 25)  // Year = 2007
-            | (6UL << 21)            // Month = June
-            | (5UL << 16)            // Day = 5
-            | (11U << 11)            // Hour = 11
-            | (38U << 5)             // Min = 38
-            | (0U >> 1)              // Sec = 0
-            ;
-
-}
-#endif
-
 FLASHMEM static bool sdcard_mount (void)
 {
     static FATFS *fs = NULL;
 
-    bool is_mounted = !!fatfs;
+    bool is_mounted = !!device.fs;
 
     if(sdcard.on_mount) {
 
-        char *mdev = sdcard.on_mount(&fatfs);
+        char *mdev = sdcard.on_mount(&device.fs);
 
-        if(fatfs != NULL) {
+        if(device.fs != NULL) {
 #ifdef NEW_FATFS
             if(mdev)
-                strcpy(dev, mdev);
+                strcpy(device.name, mdev);
 #endif
         }
     } else {
@@ -104,52 +75,52 @@ FLASHMEM static bool sdcard_mount (void)
             fs = malloc(sizeof(FATFS));
 
 #ifdef NEW_FATFS
-        if(fs && (f_mount(fs, dev, 1) == FR_OK))
+        if(fs && (f_mount(fs, device.name, 1) == FR_OK))
 #else
-        if(fs && (f_mount(0, fs) == FR_OK))
+        if(fs && (f_mount(device.id, fs) == FR_OK))
 #endif
-            fatfs = fs;
+            device.fs = fs;
         else
-            fatfs = NULL;
+            device.fs = NULL;
     }
 
-    if((mount_changed = is_mounted != !!fatfs) && !realtime_report_subscribed) {
+    if((mount_changed = is_mounted != !!device.fs) && !realtime_report_subscribed) {
         realtime_report_subscribed = true;
         on_realtime_report = grbl.on_realtime_report;
         grbl.on_realtime_report = onRealtimeReport; // Add mount status changes and job percent complete to real time report
     }
 
-    if(fatfs != NULL)
-        fs_fatfs_mount("/");
+    if(device.fs != NULL)
+        fs_fatfs_mount("/", &device);
 
-    return fatfs != NULL;
+    return device.fs != NULL;
 }
 
 FLASHMEM static void sdcard_auto_mount (void *data)
 {
-    if(fatfs == NULL && !sdcard_mount())
+    if(device.fs == NULL && !sdcard_mount())
         report_message("SD card automount failed", Message_Info);
 }
 
 static bool sdcard_unmount (void)
 {
-    if(fatfs) {
+    if(device.fs) {
         if(sdcard.on_unmount)
-            mount_changed = sdcard.on_unmount(&fatfs);
+            mount_changed = sdcard.on_unmount(&device.fs);
 #ifdef NEW_FATFS
         else
-            mount_changed = f_unmount(dev) == FR_OK;
+            mount_changed = f_unmount(device.name) == FR_OK;
 #else
         else
-            mount_changed = f_mount(0, NULL) == FR_OK;
+            mount_changed = f_mount(device.id, NULL) == FR_OK;
 #endif
-        if(mount_changed && fatfs) {
-            fatfs = NULL;
-            vfs_unmount("/");
+        if(mount_changed && device.fs) {
+            device.fs = NULL;
+            vfs_unmount(&device, "/");
         }
     }
 
-    return fatfs == NULL;
+    return device.fs == NULL;
 }
 
 FLASHMEM static status_code_t sd_cmd_mount (sys_state_t state, char *args)
@@ -159,14 +130,14 @@ FLASHMEM static status_code_t sd_cmd_mount (sys_state_t state, char *args)
 
 FLASHMEM static status_code_t sd_cmd_unmount (sys_state_t state, char *args)
 {
-    return fatfs ? (sdcard_unmount() ? Status_OK : Status_SDMountError) : Status_SDNotMounted;
+    return device.fs ? (sdcard_unmount() ? Status_OK : Status_SDMountError) : Status_SDNotMounted;
 }
 
 FLASHMEM static void sd_detect (void *mount)
 {
     if((uint32_t)mount == 0)
         sdcard_unmount();
-    else if(fatfs == NULL)
+    else if(device.fs == NULL)
         sdcard_mount();
 }
 
@@ -179,7 +150,7 @@ static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_fla
 {
     if(report.all || mount_changed) {
         stream_write("|SD:");
-        stream_write(uitoa((sd_detectable ? 2 : 0) + !!fatfs));
+        stream_write(uitoa((sd_detectable ? 2 : 0) + !!device.fs));
         mount_changed = false;
     }
 
@@ -241,7 +212,7 @@ FLASHMEM static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        report_plugin("SDCARD", "1.27");
+        report_plugin("SDCARD", "1.28");
 }
 
 FLASHMEM sdcard_events_t *sdcard_init (void)
@@ -284,10 +255,10 @@ FLASHMEM sdcard_events_t *sdcard_init (void)
 
 FLASHMEM FATFS *sdcard_getfs (void)
 {
-    if(fatfs == NULL)
+    if(device.fs == NULL)
         sdcard_mount();
 
-    return fatfs;
+    return device.fs;
 }
 
 #endif // FS_ENABLE & FS_SDCARD

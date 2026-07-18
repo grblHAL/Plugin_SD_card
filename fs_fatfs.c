@@ -46,6 +46,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "fs_fatfs.h"
+
 #ifndef ESP_PLATFORM
 #define FF_DIR DIR
 #endif
@@ -53,6 +55,27 @@
 #if FF_USE_LFN
 //#define _USE_LFN FF_USE_LFN
 #define _MAX_LFN FF_MAX_LFN
+#endif
+
+#ifdef __MSP432E401Y__
+/*---------------------------------------------------------*/
+/* User Provided Timer Function for FatFs module           */
+/*---------------------------------------------------------*/
+/* This is a real time clock service to be called from     */
+/* FatFs module. Any valid time must be returned even if   */
+/* the system does not support a real time clock.          */
+
+DWORD fatfs_getFatTime (void)
+{
+    return    ((2007UL-1980) << 25)  // Year = 2007
+            | (6UL << 21)            // Month = June
+            | (5UL << 16)            // Day = 5
+            | (11U << 11)            // Hour = 11
+            | (38U << 5)             // Min = 38
+            | (0U >> 1)              // Sec = 0
+            ;
+
+}
 #endif
 
 FLASHMEM static inline char *get_name (FILINFO *file)
@@ -350,9 +373,38 @@ FLASHMEM static int fs_format (void)
 
     return res;
 }
+
+FLASHMEM static bool fs_dev_mount (const void *dev, bool mount)
+{
+    bool ok = false;
+
+    if(dev) {
+
+        fatfs_dev_t *device = (fatfs_dev_t *)dev;
+
+        if(mount) {
+#ifdef NEW_FATFS
+            if(!(ok = f_mount(device->fs, device->name, 1) == FR_OK))
+#else
+            if(!(ok = f_mount(device->id, device->fs) == FR_OK))
+#endif
+                device->fs = NULL;
+        } else if(device->fs) {
+#ifdef NEW_FATFS
+            if((ok = f_unmount(device->name) == FR_OK))
+#else
+            if((ok = f_mount(device->id, NULL) == FR_OK))
+#endif
+                device->fs = NULL;
+        }
+    }
+
+    return ok;
+}
+
 #endif
 
-FLASHMEM void fs_fatfs_mount (const char *path)
+FLASHMEM void fs_fatfs_mount (const char *path, const fatfs_dev_t *device)
 {
     PROGMEM static const vfs_t fs = {
         .fs_name = "FatFs",
@@ -384,7 +436,8 @@ FLASHMEM void fs_fatfs_mount (const char *path)
 #endif
         .fgetfree = fs_getfree,
 #if FF_FS_READONLY == 0 && FF_USE_MKFS == 1
-        .format = fs_format
+        .format = fs_format,
+        .device_mount = fs_dev_mount
 #endif
     };
 
@@ -396,7 +449,7 @@ FLASHMEM void fs_fatfs_mount (const char *path)
 #endif
     };
 
-    vfs_mount(path, &fs, mode);
+    vfs_mount(device, path, &fs, mode);
 }
 
 #endif

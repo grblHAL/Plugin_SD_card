@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022 Terje Io
+  Copyright (c) 2022-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -21,4 +21,20 @@
 
 #pragma once
 
-void fs_fatfs_mount (const char *path);
+#if defined(ESP_PLATFORM) || defined(STM32_PLATFORM) ||  defined(__LPC17XX__) ||  defined(__IMXRT1062__) || defined(__MSP432E401Y__)
+#define NEW_FATFS
+#endif
+
+#ifdef NEW_FATFS
+typedef struct {
+    FATFS *fs;
+    char name[10];
+} fatfs_dev_t;
+#else
+typedef struct {
+    FATFS *fs;
+    int drive;
+} fatfs_dev_t;
+#endif
+
+void fs_fatfs_mount (const char *path, const fatfs_dev_t *device);
