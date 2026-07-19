@@ -53,20 +53,49 @@ static struct lfs_dev {
     const struct lfs_config *config;
 } lfs_dev = {0};
 static bool is_rootfs;
-static char cwd[100] = "/";
-static const struct lfs_config *lfs_config;
+static char _cwd[51] = "/";
+static vfs_path_t cwd = { .name = _cwd, .len = sizeof(_cwd) - 1 };
 
-FLASHMEM static char *get_path (const char *filename)
+FLASHMEM static const char *get_path (const char *path)
 {
-    static char path[120];
+    static vfs_path_t abspath = {0};
 
-    if(strlen(cwd) + strlen(filename) > sizeof(path) - 1)
-        return (char *)filename;
+    if(strlen(cwd.name) + strlen(path) + 1 > abspath.len) {
+        abspath.len = max(50, strlen(cwd.name)) + strlen(path) + 1;
+        abspath.name = realloc(abspath.name, abspath.len);
+    }
 
-    if(*filename != '/')
-       strcat(strcat(strcpy(path, cwd + 1), "/"), filename);
+    if(abspath.name) {
 
-    return *filename == '/' ? (char *)filename : path;
+        char *newpath;
+
+        if((newpath = malloc(strlen(path) + 1))) {
+
+            strcpy(newpath, path);
+            strcpy(abspath.name, *path == '/' ? "/" : cwd.name);
+
+            char *p, *el = strtok(newpath, "/");
+
+            while(el) {
+                if(!strcmp("..", el)) {
+                    if((p = strrchr(abspath.name, '/')))
+                        *(p + (p == abspath.name ? 1 : 0)) = '\0';
+                } else if(*el && strcmp(el, ".")) {
+                    if(strlen(abspath.name) == 1)
+                        strcat(abspath.name, el);
+                    else
+                        strcat(strcat(abspath.name, "/"), el);
+                }
+                el = strtok(NULL, "/");
+            }
+
+            free(newpath);
+        } else
+            strcpy(abspath.name, path);
+    } else
+        abspath.len = 0;
+
+    return abspath.name ? (const char *)abspath.name : path;
 }
 
 FLASHMEM static vfs_file_t *fs_open (const char *filename, const char *mode)
@@ -193,14 +222,14 @@ FLASHMEM static int fs_mkdir (const char *path)
 
 FLASHMEM static char *fs_getcwd (char *buf, size_t size)
 {
-    return cwd;
+    return cwd.name;
 }
 
 FLASHMEM static vfs_dir_t *fs_opendir (const char *path)
 {
     vfs_dir_t *dir = calloc(1, sizeof(vfs_dir_t) + sizeof(lfs_dir_t));
 
-    if (dir && (vfs_errno = lfs_dir_open(&lfs_dev.fs, (lfs_dir_t *)&dir->handle, path)) != LFS_ERR_OK) {
+    if(dir && (vfs_errno = lfs_dir_open(&lfs_dev.fs, (lfs_dir_t *)&dir->handle, path)) != LFS_ERR_OK) {
         free(dir);
         dir = NULL;
     }
@@ -214,7 +243,7 @@ FLASHMEM static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
 
     *dirent->name = '\0';
 
-    if ((vfs_errno = lfs_dir_read(&lfs_dev.fs, (lfs_dir_t *)&dir->handle, &f)) <= 0)
+    if((vfs_errno = lfs_dir_read(&lfs_dev.fs, (lfs_dir_t *)&dir->handle, &f)) <= 0)
         return NULL;
 
     if(!strcmp(f.name, ".") && (vfs_errno = lfs_dir_read(&lfs_dev.fs, (lfs_dir_t *)&dir->handle, &f)) <= 0)
@@ -237,7 +266,7 @@ FLASHMEM static char *fs_readdir (vfs_dir_t *dir, vfs_dirent_t *dirent)
 
 FLASHMEM static void fs_closedir (vfs_dir_t *dir)
 {
-    if (dir) {
+    if(dir) {
         vfs_errno = lfs_dir_close(&lfs_dev.fs, (lfs_dir_t *)&dir->handle);
         free(dir);
     }
@@ -270,11 +299,27 @@ FLASHMEM static int fs_stat (const char *filename, vfs_stat_t *st)
 
 FLASHMEM static int fs_chdir (const char *path)
 {
-    int errno = 0;
+    int errno;
     vfs_stat_t st;
 
-    if((errno = fs_stat(*path ? path : "/", &st)) == 0)
-        strcpy(cwd, *path ? path : "/");
+    if((errno = fs_stat(*path ? path : "/", &st)) == 0) {
+        size_t cwdlen;
+        if((cwdlen = strlen(path)) > cwd.len) {
+            if(cwd.name == _cwd)
+                cwd.name = malloc(cwdlen + 1);
+            else
+                cwd.name = realloc(cwd.name, cwdlen + 1);
+            if(cwd.name)
+                cwd.len = cwdlen;
+            else {
+                cwd.name = _cwd;
+                cwd.len = sizeof(_cwd) - 1;
+                path = "/";
+                errno = -1;
+            }
+        }
+        strcpy(cwd.name, *path ? path : "/");
+    }
 
     return errno;
 }
@@ -306,14 +351,14 @@ FLASHMEM static int fs_utime (const char *filename, struct tm *modified)
 FLASHMEM static bool fs_getfree (vfs_free_t *free)
 {
     free->size = lfs_dev.config->block_count * lfs_dev.config->block_size;
-    free->used = lfs_fs_size(&lfs_dev.fs) * lfs_config->block_size;
+    free->used = lfs_fs_size(&lfs_dev.fs) * lfs_dev.config->block_size;
 
     return true;
 }
 
 FLASHMEM static int fs_format (void)
 {
-    strcpy(cwd, "/");
+    strcpy(cwd.name, "/");
 
     return lfs_format(&lfs_dev.fs, lfs_dev.config);
 }
