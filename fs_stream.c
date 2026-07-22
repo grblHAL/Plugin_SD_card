@@ -182,7 +182,7 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
                 hal.stream.write(buf);
         }
 
-        if(dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
+        if(dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s%s|SIZE:-1]" ASCII_EOL, path, add_sep ? "/" : "", dirent->name))
             hal.stream.write(buf);
 
         grbl.on_execute_realtime(state_get());
