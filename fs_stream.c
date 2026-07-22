@@ -182,7 +182,7 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
                 hal.stream.write(buf);
         }
 
-        if(depth == 0 && dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
+        if(dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
             hal.stream.write(buf);
 
         grbl.on_execute_realtime(state_get());
@@ -793,6 +793,22 @@ FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
     return retval;
 }
 
+FLASHMEM static status_code_t cmd_mkdir (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if(!fs.mounted)
+        retval = Status_SDNotMounted;
+    else if(fs.mode.read_only)
+        retval = Status_FsReadOnly;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(args)
+        retval = vfs_mkdir(args) ? Status_FileOpenFailed : Status_OK;
+
+    return retval;
+}
+
 FLASHMEM static void onReset (void)
 {
     if(hal.stream.type == StreamType_File && active_stream.type != StreamType_Null) {
@@ -888,6 +904,7 @@ FLASHMEM void fs_stream_init (void)
          ASCII_EOL "$F=<filename> - run file"
         } },
         {"F+", cmd_file_all, {}, { .str = "$F+ - list all files" } },
+        {"FMD", cmd_mkdir, {}, { .str = "$FMD=<path> - create directory" } },
         {"FR", cmd_rewind, { .noargs = On }, { .str = "enable rewind mode for next file to run" } },
     #if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
         {"FD", cmd_unlink, {}, { .str = "$FD=<filename> - delete file" } },
@@ -905,6 +922,7 @@ FLASHMEM void fs_stream_init (void)
     };
 
     PROGMEM static const status_detail_t status_detail[] = {
+        { Status_FileOpenFailed, "Directory create failed." },
         { Status_FileReadError, "File delete failed." },
         { Status_FsFailedOpenDir, "Directory listing failed." },
         { Status_FSDirNotFound, "Directory not found." },

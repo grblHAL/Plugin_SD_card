@@ -36,6 +36,10 @@ Dump file content to output stream.
 
 Delete file.
 
+`$FMD=<path>`
+
+Create directory.
+
 `$FF=<mount path>` or `$FF=<filing system>`
 
 Format filing system system.
