@@ -40,6 +40,10 @@ Delete file.
 
 Create directory.
 
+`$FRD=<path>`
+
+Remove empty directory. `<path>` may be relative to the current working directory or absolute.
+
 `$FF=<mount path>` or `$FF=<filing system>`
 
 Format filing system system.

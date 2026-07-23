@@ -149,6 +149,29 @@ static file_status_t allowed (char *filename, bool is_file)
     return status == Filename_Valid ? filename_valid(filename) : status;
 }
 
+static bool dir_has_visible_entries (char *path)
+{
+    bool has_entries = false;
+    vfs_dir_t *dir;
+    vfs_dirent_t *dirent;
+
+    if((dir = vfs_opendir(path)) == NULL)
+        return false;
+
+    while((dirent = vfs_readdir(dir)) != NULL) {
+        if(dirent->name[0] == '\0')
+            continue;
+        if(!dirent->st_mode.hidden) {
+            has_entries = true;
+            break;
+        }
+    }
+
+    vfs_closedir(dir);
+
+    return has_entries;
+}
+
 static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
 {
     int res = 0;
@@ -182,8 +205,19 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
                 hal.stream.write(buf);
         }
 
-        if(dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s%s|SIZE:-1]" ASCII_EOL, path, add_sep ? "/" : "", dirent->name))
-            hal.stream.write(buf);
+        if(dirent->st_mode.directory && !dirent->st_mode.hidden) {
+            bool emit_dir = true;
+
+            if(is_root && !strcmp(dirent->name, "littlefs")) {
+                char dirpath[MAX_PATHLEN];
+
+                if(snprintf(dirpath, sizeof(dirpath), "%s%s%s", path, add_sep ? "/" : "", dirent->name) < sizeof(dirpath))
+                    emit_dir = dir_has_visible_entries(dirpath);
+            }
+
+            if(emit_dir && snprintf(buf, BUFLEN, "[FILE:%s%s%s|SIZE:-1]" ASCII_EOL, path, add_sep ? "/" : "", dirent->name))
+                hal.stream.write(buf);
+        }
 
         grbl.on_execute_realtime(state_get());
     }
@@ -808,6 +842,27 @@ FLASHMEM static status_code_t cmd_mkdir (sys_state_t state, char *args)
 
     return retval;
 }
+FLASHMEM static status_code_t cmd_rmdir (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if(!fs.mounted)
+        retval = Status_SDNotMounted;
+    else if(fs.mode.read_only)
+        retval = Status_FsReadOnly;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(args) {
+        vfs_stat_t st;
+
+        if(vfs_stat(args, &st) == 0 && st.st_mode.directory)
+            retval = vfs_unlink(args) ? Status_FileReadError : Status_OK;
+        else
+            retval = Status_FSDirNotFound;
+    }
+
+    return retval;
+}
 
 FLASHMEM static void onReset (void)
 {
@@ -908,6 +963,7 @@ FLASHMEM void fs_stream_init (void)
         {"FR", cmd_rewind, { .noargs = On }, { .str = "enable rewind mode for next file to run" } },
     #if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
         {"FD", cmd_unlink, {}, { .str = "$FD=<filename> - delete file" } },
+        {"FRD", cmd_rmdir, {}, { .str = "$FRD=<path> - remove empty directory" } },
     #endif
         {"FF", cmd_format, {}, { .str = "$FF=yes - format file system" } },
         {"F<", cmd_to_output, {}, { .str = "$F<=<filename> - dump file to output" } },
