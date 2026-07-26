@@ -186,6 +186,11 @@ FLASHMEM static int fs_seek (vfs_file_t *file, size_t offset)
     return lfs_file_seek(&lfs_dev.fs, &((time_file_t *)&file->handle)->file, offset, LFS_SEEK_SET);
 }
 
+FLASHMEM static int fs_truncate (vfs_file_t *file, size_t length)
+{
+    return lfs_file_truncate(&lfs_dev.fs, &((time_file_t *)&file->handle)->file, length);
+}
+
 FLASHMEM static bool fs_eof (vfs_file_t *file)
 {
     return lfs_file_tell(&lfs_dev.fs, &((time_file_t *)&file->handle)->file) == file->size;
@@ -392,6 +397,7 @@ FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *conf
         .fwrite = fs_write,
         .ftell = fs_tell,
         .fseek = fs_seek,
+        .ftruncate = fs_truncate,
         .feof = fs_eof,
         .frename = fs_rename,
         .funlink = fs_unlink,

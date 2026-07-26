@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #define BUFLEN 80
 
@@ -91,7 +92,6 @@ static file_t file = {
 
 static struct {
     uint8_t mounted;
-    vfs_st_mode_t mode;
 } fs = {};
 
 static bool frewind = false, webui = false;
@@ -562,7 +562,7 @@ FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
     status_code_t retval = Status_Unhandled;
 
     if(!fs.mounted)
-        retval = Status_SDNotMounted;
+        retval = Status_FsNotMounted;
     else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(fname && vfs_stat(fname, &st) == 0) {
@@ -663,7 +663,7 @@ FLASHMEM static status_code_t cmd_to_output (sys_state_t state, char *args)
     status_code_t retval = Status_Unhandled;
 
     if(!fs.mounted)
-        retval = Status_SDNotMounted;
+        retval = Status_FsNotMounted;
     else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(args) {
@@ -777,21 +777,51 @@ FLASHMEM static status_code_t cmd_mount_info (sys_state_t state, char *args)
     return Status_OK;
 }
 
+#if (FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0) || FS_ENABLE & FS_LFS
+
 FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
     if(!fs.mounted)
-        retval = Status_SDNotMounted;
-    else if(fs.mode.read_only)
-        retval = Status_FsReadOnly;
+        retval = Status_FsNotMounted;
     else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
     else if(args)
-        retval = vfs_unlink(args) ? Status_FileReadError : Status_OK;
+        retval = vfs_unlink(args) ? (vfs_errno == EROFS ? Status_FsReadOnly : Status_FileDeleteFailed) : Status_OK;
 
     return retval;
 }
+
+FLASHMEM static status_code_t cmd_mkdir (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if(!fs.mounted)
+        retval = Status_FsNotMounted;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(args)
+        retval = vfs_mkdir(args) ? (vfs_errno == EROFS ? Status_FsReadOnly : Status_FileOpenFailed) : Status_OK;
+
+    return retval;
+}
+
+FLASHMEM static status_code_t cmd_rmdir (sys_state_t state, char *args)
+{
+    status_code_t retval = Status_Unhandled;
+
+    if(!fs.mounted)
+        retval = Status_FsNotMounted;
+    else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(args)
+        retval = vfs_rmdir(args) ? (vfs_errno == EROFS ? Status_FsReadOnly : Status_FileDeleteFailed) : Status_OK;
+
+    return retval;
+}
+
+#endif
 
 FLASHMEM static void onReset (void)
 {
@@ -847,7 +877,7 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.13");
+        report_plugin("FS stream", "1.14");
 
 }
 
@@ -864,7 +894,6 @@ FLASHMEM static void onFsMount (const char *path, const vfs_t *vfs, vfs_st_mode_
     if(!mode.hidden) {
 
         fs.mounted++;
-        fs.mode = mode;
 
         if(driver_reset == NULL) {
 
@@ -889,8 +918,10 @@ FLASHMEM void fs_stream_init (void)
         } },
         {"F+", cmd_file_all, {}, { .str = "$F+ - list all files" } },
         {"FR", cmd_rewind, { .noargs = On }, { .str = "enable rewind mode for next file to run" } },
-    #if FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0
+    #if (FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0) || FS_ENABLE & FS_LFS
         {"FD", cmd_unlink, {}, { .str = "$FD=<filename> - delete file" } },
+        {"FMD", cmd_mkdir, {}, { .str = "$FMD=<path> - create directory" } },
+        {"FRD", cmd_rmdir, {}, { .str = "$FRD=<path> - remove empty directory" } },
     #endif
         {"FF", cmd_format, {}, { .str = "$FF=yes - format file system" } },
         {"F<", cmd_to_output, {}, { .str = "$F<=<filename> - dump file to output" } },
@@ -905,13 +936,12 @@ FLASHMEM void fs_stream_init (void)
     };
 
     PROGMEM static const status_detail_t status_detail[] = {
-        { Status_FileReadError, "File delete failed." },
         { Status_FsFailedOpenDir, "Directory listing failed." },
         { Status_FSDirNotFound, "Directory not found." },
-        { Status_SDNotMounted, "SD Card not mounted." },
         { Status_FsNotMounted, "File system not mounted." },
         { Status_FsReadOnly, "File system is read only." },
-        { Status_FsFormatFailed, "File system format failed." }
+        { Status_FsFormatFailed, "File system format failed." },
+        { Status_FileDeleteFailed, "Delete failed." }
     };
 
     static error_details_t error_details = {

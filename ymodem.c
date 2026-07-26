@@ -50,7 +50,7 @@ typedef ymodem_status_t (*process_data_ptr)(uint8_t c);
 
 static struct {
     vfs_file_t *handle;
-    char filename[32];
+    char filename; // First character only
     uint32_t filelength;
     uint32_t received;
     uint16_t crc;
@@ -119,6 +119,8 @@ static void end_transfer (bool send_ack)
     grbl.on_execute_realtime = on_execute_realtime;
 
     if(ymodem.handle) {
+        if(!send_ack)
+            vfs_truncate(ymodem.handle, 0);
         vfs_close(ymodem.handle);
         ymodem.handle = NULL;
     }
@@ -216,20 +218,21 @@ static ymodem_status_t await_crc (uint8_t c)
         if(ccitt_crc16((const uint8_t *)&ymodem.payload, ymodem.packet_len) != ymodem.crc)  // If CRC invalid
             return YModem_Purge;                                                            // purge input stream and return NAK.
 
-        if(ymodem.packet_num == 0 && *ymodem.filename == 0) { // Open file or end transfer
+        if(ymodem.packet_num == 0 && ymodem.filename == '\0') { // Open file or end transfer
 
             const char *data = (const char *)ymodem.payload;
 
             // If no filename present in payload end transfer by sending ACK else send ACK + C if file could be opened, CAN if not.
             if((status = *data == '\0' ? YModem_NoFile : YModem_ACKFile) == YModem_ACKFile) {
 
-                strcpy(ymodem.filename, (const char *)data); // Save filename
+                const char *filename = data;
 
-                data += strlen(ymodem.filename) + 1;         // Save file length if present
-                if(*data != '\0')
-                    ymodem.filelength = atoi(data);
+                ymodem.filename = *filename;        // Save first character of filename
+                data += strlen(data) + 1;           // and move pointer to file length.
+                if(*data)                           // If have file length
+                    ymodem.filelength = atoi(data); // then get it.
 
-                if((ymodem.handle = vfs_open(ymodem.filename, "w")) == NULL)
+                if(ymodem.filename == '\0' || (ymodem.handle = vfs_open(filename, "w")) == NULL)
                     status = YModem_CAN;
             }
 

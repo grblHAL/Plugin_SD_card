@@ -158,6 +158,11 @@ FLASHMEM static int fs_seek (vfs_file_t *file, size_t offset)
     return f_lseek((FIL *)&file->handle, offset);
 }
 
+FLASHMEM static int fs_truncate (vfs_file_t *file, size_t length)
+{
+    return fs_seek(file, length) == FR_OK ? f_truncate((FIL *)&file->handle) : FR_DISK_ERR;
+}
+
 FLASHMEM static bool fs_eof (vfs_file_t *file)
 {
 #pragma GCC diagnostic push
@@ -415,6 +420,7 @@ FLASHMEM void fs_fatfs_mount (const char *path, const fatfs_dev_t *device)
         .fwrite = fs_write,
         .ftell = fs_tell,
         .fseek = fs_seek,
+        .ftruncate = fs_truncate,
         .feof = fs_eof,
         .frename = fs_rename,
         .funlink = fs_unlink,
