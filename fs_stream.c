@@ -777,7 +777,7 @@ FLASHMEM static status_code_t cmd_mount_info (sys_state_t state, char *args)
     return Status_OK;
 }
 
-#if (FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0) || FS_ENABLE & FS_LFS
+#if (FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0) || (FS_ENABLE & FS_LFS)
 
 FLASHMEM static status_code_t cmd_unlink (sys_state_t state, char *args)
 {
@@ -918,7 +918,7 @@ FLASHMEM void fs_stream_init (void)
         } },
         {"F+", cmd_file_all, {}, { .str = "$F+ - list all files" } },
         {"FR", cmd_rewind, { .noargs = On }, { .str = "enable rewind mode for next file to run" } },
-    #if (FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0) || FS_ENABLE & FS_LFS
+    #if (FF_FS_READONLY == 0 && FF_FS_MINIMIZE == 0) || (FS_ENABLE & FS_LFS)
         {"FD", cmd_unlink, {}, { .str = "$FD=<filename> - delete file" } },
         {"FMD", cmd_mkdir, {}, { .str = "$FMD=<path> - create directory" } },
         {"FRD", cmd_rmdir, {}, { .str = "$FRD=<path> - remove empty directory" } },
