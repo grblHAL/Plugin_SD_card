@@ -304,10 +304,10 @@ FLASHMEM static int fs_stat (const char *filename, vfs_stat_t *st)
 
 FLASHMEM static int fs_chdir (const char *path)
 {
-    int errno;
+    int ferrno;
     vfs_stat_t st;
 
-    if((errno = fs_stat(*path ? path : "/", &st)) == 0) {
+    if((ferrno = fs_stat(*path ? path : "/", &st)) == 0) {
         size_t cwdlen;
         if((cwdlen = strlen(path)) > cwd.len) {
             if(cwd.name == _cwd)
@@ -320,13 +320,13 @@ FLASHMEM static int fs_chdir (const char *path)
                 cwd.name = _cwd;
                 cwd.len = sizeof(_cwd) - 1;
                 path = "/";
-                errno = -1;
+                ferrno = -1;
             }
         }
         strcpy(cwd.name, *path ? path : "/");
     }
 
-    return errno;
+    return ferrno;
 }
 
 FLASHMEM static int fs_chmod (const char *filename, vfs_st_mode_t attr, vfs_st_mode_t mask)
