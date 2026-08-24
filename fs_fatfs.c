@@ -160,7 +160,11 @@ FLASHMEM static int fs_seek (vfs_file_t *file, size_t offset)
 
 FLASHMEM static int fs_truncate (vfs_file_t *file, size_t length)
 {
+#if FF_FS_READONLY
+    return -1;
+#else
     return fs_seek(file, length) == FR_OK ? f_truncate((FIL *)&file->handle) : FR_DISK_ERR;
+#endif
 }
 
 FLASHMEM static bool fs_eof (vfs_file_t *file)
