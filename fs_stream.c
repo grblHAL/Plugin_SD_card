@@ -235,7 +235,7 @@ FLASHMEM static void file_close (void)
     if(file.handle) {
         vfs_close(file.handle);
         if(hal.stream.file == file.handle)
-            hal.stream.file = NULL;
+        	stream_set_file(NULL, NULL);
         file.handle = NULL;
     }
 }
@@ -320,7 +320,6 @@ FLASHMEM static void stream_end_job (bool flush)
     grbl.on_stream_changed = on_stream_changed;
 
     memcpy(&hal.stream, &active_stream, offsetof(io_stream_t, report)); // Restore stream pointers,
-    stream_set_type(hal.stream.type, hal.stream.file);                  // ...
     active_stream.type = StreamType_Null;                               // ...
     hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);        // real time command handling and
     if(grbl.report.status_message == trap_status_messages)              // ...
@@ -336,7 +335,7 @@ FLASHMEM static void stream_end_job (bool flush)
     webui = frewind = false;
 
     if(grbl.on_stream_changed)
-        grbl.on_stream_changed(hal.stream.type);
+        grbl.on_stream_changed();
 }
 
 static int32_t stream_read (void)
@@ -528,23 +527,22 @@ static bool check_input_stream (uint8_t c)
     return ok;
 }
 
-FLASHMEM static void stream_changed (stream_type_t type)
+FLASHMEM static void stream_changed (void)
 {
-    if(type != StreamType_File && file.handle != NULL) {
+    if(!stream_is_file() && file.handle != NULL) {
 
         // Reconnect from WebUI?
-        if(webui && (type != StreamType_WebSocket || hal.stream.state.webui_connected)) {
+        if(webui && (hal.stream.type != StreamType_WebSocket || hal.stream.state.webui_connected)) {
             active_stream.set_enqueue_rt_handler(enqueue_realtime_command); // Restore previous real time handler,
             memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));       // save current stream pointers
-            hal.stream.read = read_redirected;                              // then redirect to read from file instead
-            stream_set_type(StreamType_File, file.handle);                  // ...
+            stream_set_file(file.handle, read_redirected);                  // then redirect to read from file instead
 
             if(hal.stream.suspend_read)                                     // If active stream support tool change suspend
                 hal.stream.suspend_read = stream_suspend;                   // then we do as well
             else                                                            //
                 hal.stream.suspend_read = NULL;                             // else not
 
-            if(type == StreamType_WebSocket)                                                        // If WebUI came back online
+            if(hal.stream.type == StreamType_WebSocket)                                             // If WebUI came back online
                 enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // restore normal operation
             else                                                                                    // else
                 enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(check_input_stream);   // check for stream takeover
@@ -553,7 +551,7 @@ FLASHMEM static void stream_changed (stream_type_t type)
     }
 
     if(on_stream_changed)
-        on_stream_changed(type);
+        on_stream_changed();
 }
 
 FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
@@ -578,8 +576,7 @@ FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
             if(!(grbl.on_file_open && (retval = grbl.on_file_open(fname, file.handle, true)) == Status_OK)) {
 
                 memcpy(&active_stream, &hal.stream, sizeof(io_stream_t));   // Save current stream pointers
-                hal.stream.read = stream_read;                              // then redirect to read from file
-                stream_set_type(StreamType_File, file.handle);              // ...
+                stream_set_file(file.handle, stream_read);                  // then redirect to read from file
                 if(hal.stream.suspend_read)                                 // If active stream support tool change suspend
                     hal.stream.suspend_read = stream_suspend;               // then we do as well
                 else                                                        //
@@ -602,7 +599,7 @@ FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
                 enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(drop_input_stream);    // Drop input from current stream except realtime commands
 
                 if(grbl.on_stream_changed)
-                    grbl.on_stream_changed(hal.stream.type);
+                    grbl.on_stream_changed();
 
                 read_redirected = hal.stream.read;
 
@@ -825,7 +822,7 @@ FLASHMEM static status_code_t cmd_rmdir (sys_state_t state, char *args)
 
 FLASHMEM static void onReset (void)
 {
-    if(hal.stream.type == StreamType_File && active_stream.type != StreamType_Null) {
+    if(stream_is_file() && active_stream.type != StreamType_Null) {
         if(file.line_number) {
             char buf[70];
             sprintf(buf, "Reset during streaming of file at line: " UINT32FMT, file.line_number);
@@ -877,7 +874,7 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.14");
+        report_plugin("FS stream", "1.15");
 
 }
 
