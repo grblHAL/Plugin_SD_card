@@ -90,7 +90,7 @@ FLASHMEM static inline char *get_name (FILINFO *file)
 FLASHMEM static vfs_file_t *fs_open (const char *filename, const char *mode)
 {
     BYTE flags = 0;
-    vfs_file_t *file = malloc(sizeof(vfs_file_t) + sizeof(FIL));
+    vfs_file_t *file = malloc(sizeof(vfs_file_t) - VFS_HANDLE_SIZE + sizeof(FIL));
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
@@ -234,7 +234,7 @@ FLASHMEM static char *fs_getcwd (char *buf, size_t size)
 
 FLASHMEM static vfs_dir_t *fs_opendir (const char *path)
 {
-    vfs_dir_t *dir = malloc(sizeof(vfs_dir_t) + sizeof(FF_DIR));
+    vfs_dir_t *dir = malloc(sizeof(vfs_dir_t) - VFS_HANDLE_SIZE + sizeof(FF_DIR));
 
     if(dir && (vfs_errno = f_opendir((FF_DIR *)&dir->handle, path)) != FR_OK)
     {

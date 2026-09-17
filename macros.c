@@ -161,7 +161,7 @@ FLASHMEM static void stack_push (macro_id_t macro_id, line_number_t line_number,
 #endif
 }
 
-FLASHMEM static status_code_t macro_start (char *filename, macro_id_t macro_id, uint32_t repeats, bool pstack)
+FLASHMEM static status_code_t macro_start (const char *filename, macro_id_t macro_id, uint32_t repeats, bool pstack)
 {
     vfs_file_t *file;
 
@@ -212,18 +212,12 @@ FLASHMEM static status_code_t macro_execute (macro_id_t macro_id, line_number_t 
             status = Status_Handled;
 
         } else {
-            char filename[32];
 
-#if LITTLEFS_ENABLE == 1
-            sprintf(filename, "/littlefs/P%d.macro", macro_id);
+            const char *path;
+            char filename[21] = "P";
 
-            if((status = macro_start(filename, macro_id, repeats, !args.$)) != Status_Handled)
-#endif
-            {
-                sprintf(filename, "/P%d.macro", macro_id);
-
-                status = macro_start(filename, macro_id, repeats, !args.$);
-            }
+            if((path = vfs_locate_file(strcat(strcat(filename, uitoa(macro_id)), ".macro"))))
+                status = macro_start(path, macro_id, repeats, !args.$);
         }
     }
 
@@ -364,7 +358,7 @@ FLASHMEM static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FS macro plugin", "0.24");
+        report_plugin("FS macro plugin", "0.25");
 }
 
 FLASHMEM void fs_macros_init (void)

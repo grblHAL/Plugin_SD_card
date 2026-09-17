@@ -235,7 +235,7 @@ FLASHMEM static void file_close (void)
     if(file.handle) {
         vfs_close(file.handle);
         if(hal.stream.file == file.handle)
-        	stream_set_file(NULL, NULL);
+            stream_set_file(NULL, NULL);
         file.handle = NULL;
     }
 }
@@ -867,15 +867,14 @@ FLASHMEM static void onReportOptions (bool newopt)
   #if (FS_ENABLE & FS_SDCARD) && FF_FS_READONLY == 0
         if(hal.stream.write_char)
             hal.stream.write(",YM");
-  #elif FS_ENABLE & FS_LFS_ROOT
+  #elif (FS_ENABLE & (FS_LFS_ROOT|FS_POSIX))
         hal.stream.write(hal.stream.write_char == NULL ? ",FS" : ",FS,YM");
   #endif
 #else
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.15");
-
+        report_plugin("FS stream", "1.16");
 }
 
 FLASHMEM static void onFsUnmount (const char *path)
@@ -960,7 +959,7 @@ FLASHMEM void fs_stream_init (void)
     errors_register(&error_details);
     system_register_commands(&sdcard_commands);
 
-#if (FS_ENABLE & FS_YMODEM) && (((FS_ENABLE & FS_SDCARD) && FF_FS_READONLY == 0) || (FS_ENABLE & FS_LFS_ROOT))
+#if (FS_ENABLE & FS_YMODEM) && (((FS_ENABLE & FS_SDCARD) && FF_FS_READONLY == 0) || (FS_ENABLE & (FS_LFS_ROOT|FS_POSIX)))
     if(hal.stream.write_char != NULL)
         ymodem_init();
 #endif

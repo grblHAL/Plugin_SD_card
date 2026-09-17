@@ -32,6 +32,7 @@
 #include <string.h>
 #include <time.h>
 #include <limits.h>
+#include <errno.h>
 
 #include "../littlefs/lfs.h"
 #include "../littlefs/lfs_util.h"
@@ -55,6 +56,8 @@ static struct lfs_dev {
 static bool is_rootfs;
 static char _cwd[51] = "/";
 static vfs_path_t cwd = { .name = _cwd, .len = sizeof(_cwd) - 1 };
+static settings_changed_ptr on_settings_changed = NULL;
+static bool is_hidden = true;
 
 FLASHMEM static const char *get_path (const char *path)
 {
@@ -101,7 +104,7 @@ FLASHMEM static const char *get_path (const char *path)
 FLASHMEM static vfs_file_t *fs_open (const char *filename, const char *mode)
 {
     int flags = 0;
-    vfs_file_t *file = malloc(sizeof(vfs_file_t) + sizeof(time_file_t));
+    vfs_file_t *file = malloc(sizeof(vfs_file_t) - VFS_HANDLE_SIZE + sizeof(time_file_t));
 
     if(file) {
 
@@ -232,7 +235,7 @@ FLASHMEM static char *fs_getcwd (char *buf, size_t size)
 
 FLASHMEM static vfs_dir_t *fs_opendir (const char *path)
 {
-    vfs_dir_t *dir = calloc(1, sizeof(vfs_dir_t) + sizeof(lfs_dir_t));
+    vfs_dir_t *dir = calloc(1, sizeof(vfs_dir_t) - VFS_HANDLE_SIZE + sizeof(lfs_dir_t));
 
     if(dir && (vfs_errno = lfs_dir_open(&lfs_dev.fs, (lfs_dir_t *)&dir->handle, path)) != LFS_ERR_OK) {
         free(dir);
@@ -307,7 +310,7 @@ FLASHMEM static int fs_chdir (const char *path)
     int ferrno;
     vfs_stat_t st;
 
-    if((ferrno = fs_stat(*path ? path : "/", &st)) == 0) {
+    if((ferrno = fs_stat(*path ? path : "/", &st)) == 0 && st.st_mode.directory) {
         size_t cwdlen;
         if((cwdlen = strlen(path)) > cwd.len) {
             if(cwd.name == _cwd)
@@ -324,7 +327,8 @@ FLASHMEM static int fs_chdir (const char *path)
             }
         }
         strcpy(cwd.name, *path ? path : "/");
-    }
+    } else
+        ferrno = ENOTDIR;
 
     return ferrno;
 }
@@ -387,6 +391,27 @@ FLASHMEM static bool fs_dev_mount (const void *dev, bool mount)
     return ret == LFS_ERR_OK;
 }
 
+FLASHMEM static void onSettingsChanged (settings_t *settings, settings_changed_flags_t changed)
+{
+    vfs_drives_t *dh;
+
+    on_settings_changed(settings, changed);
+
+    if(settings->fs_options.lfs_hidden != is_hidden && (dh = vfs_drives_open())) {
+
+        vfs_drive_t *drive;
+        vfs_st_mode_t mode = { .hidden = settings->fs_options.lfs_hidden };
+
+        is_hidden = mode.hidden;
+
+        while((drive = vfs_drives_read(dh, true))) {
+            if(!strcmp(drive->name, "littlefs"))
+                vfs_mount_set_mode(drive->path, mode);
+        }
+        vfs_drives_close(dh);
+    }
+}
+
 FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *config)
 {
     PROGMEM static const vfs_t littlefs = {
@@ -423,10 +448,16 @@ FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *conf
         lfs_format(&lfs_dev.fs, config);
 
     if(lfs_mount(&lfs_dev.fs, config) == LFS_ERR_OK) {
-        vfs_st_mode_t mode = {0};
-        mode.hidden = settings.fs_options.lfs_hidden;
+
+        vfs_st_mode_t mode = { .hidden = settings.fs_options.lfs_hidden };
+
+        is_hidden = mode.hidden;
         is_rootfs = !strcmp(path, "/");
-        hal.driver_cap.littlefs = vfs_mount(&lfs_dev, path, &littlefs, mode);
+
+        if((hal.driver_cap.littlefs = vfs_mount(&lfs_dev, path, &littlefs, mode)) && !on_settings_changed) {
+            on_settings_changed = grbl.on_settings_changed;
+            grbl.on_settings_changed = onSettingsChanged;
+        }
     } else
         task_run_on_startup(report_warning, "LittleFS mount failed!");
 }

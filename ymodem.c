@@ -5,7 +5,7 @@
 
   Specification: http://wiki.synchro.net/ref:ymodem
 
-  NOTE: Receiver only, does not send initial 'C' to start transfer.
+  NOTE: Receiver does not send initial 'C' to start transfer.
         Start transfer by sending SOH or STX.
 
   Copyright (c) 2021-2026 Terje Io
@@ -24,7 +24,6 @@
   along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
-
 #include "sdcard.h"
 
 #if FS_ENABLE & FS_YMODEM
@@ -33,6 +32,7 @@
 #include <string.h>
 
 #include "grbl/crc.h"
+#include "grbl/task.h"
 #include "grbl/vfs.h"
 
 typedef enum {
@@ -61,9 +61,10 @@ static struct {
     uint32_t next_timeout;
     process_data_ptr process;
     bool seq_inv;
-    bool crc_lsb;
+    bool crc_msb;
     bool completed;
     bool repeated;
+    bool upload;
     uint8_t payload[1024];
 } ymodem;
 static struct {
@@ -83,6 +84,7 @@ static ymodem_status_t await_packetnum (uint8_t c);
 static ymodem_status_t get_payload (uint8_t c);
 static ymodem_status_t await_crc (uint8_t c);
 static ymodem_status_t await_eot (uint8_t c);
+static ymodem_status_t await_ack (uint8_t c);
 
 static int32_t get_char (void)
 {
@@ -112,22 +114,23 @@ static ISR_CODE bool ISR_FUNC(put_char)(uint8_t c)
 }
 
 // End transfer handler.
-static void end_transfer (bool send_ack)
+static void end_transfer (uint8_t out)
 {
     // Restore input stream and detach protocol loop from foreground process.
     hal.stream.set_enqueue_rt_handler(rt_handler);
     grbl.on_execute_realtime = on_execute_realtime;
 
     if(ymodem.handle) {
-        if(!send_ack)
+        if(!out && !ymodem.upload)
             vfs_truncate(ymodem.handle, 0);
         vfs_close(ymodem.handle);
         ymodem.handle = NULL;
     }
 
-    if(send_ack) {
-        hal.stream.write_char(ASCII_ACK);
-        hal.stream.write_char('C');
+    if(out) {
+        hal.stream.write_char(out);
+        if(out == ASCII_ACK)
+            hal.stream.write_char('C');
     }
 }
 
@@ -135,9 +138,9 @@ static void end_transfer (bool send_ack)
 static ymodem_status_t await_cancel (uint8_t c)
 {
     if(c == ASCII_CAN)
-        end_transfer(false);
+        end_transfer(ASCII_NUL);
     else
-        ymodem.process = await_soh;
+        ymodem.process = ymodem.upload ? await_ack : await_soh;
 
     return YModem_NOOP;
 }
@@ -149,7 +152,7 @@ static ymodem_status_t purge (uint8_t c)
 }
 
 //
-// Packet processing
+// Packet processing (receive)
 //
 
 // Start of header handler.
@@ -159,11 +162,11 @@ static ymodem_status_t await_soh (uint8_t c)
 
     if(c == ASCII_SOH || c == ASCII_STX) {
         ymodem.idx = ymodem.crc = 0;
-        ymodem.crc_lsb = ymodem.seq_inv = ymodem.repeated = false;
+        ymodem.crc_msb = ymodem.seq_inv = ymodem.repeated = false;
         ymodem.packet_len = c == ASCII_SOH ? 128 : 1024;
         ymodem.process = await_packetnum; // Set active handler to wait for packet number.
     } else if(c == ASCII_EOT)
-        end_transfer(true);
+        end_transfer(ASCII_ACK);
     else if(c == ASCII_CAN)
         ymodem.process = await_cancel;   // Set active handler to wait for second CAN character.
     else
@@ -191,6 +194,14 @@ static ymodem_status_t await_packetnum (uint8_t c)
     return status;
 }
 
+static ymodem_status_t await_eot (uint8_t c)
+{
+    if(c == ASCII_EOT)
+        end_transfer(ASCII_ACK);
+
+    return YModem_NOOP;
+}
+
 // Payload handler. Saves incoming characters in payload buffer.
 static ymodem_status_t get_payload (uint8_t c)
 {
@@ -207,8 +218,8 @@ static ymodem_status_t await_crc (uint8_t c)
 {
     ymodem_status_t status = YModem_NOOP;
 
-    if(!ymodem.crc_lsb) {
-        ymodem.crc_lsb = true;
+    if(!ymodem.crc_msb) {
+        ymodem.crc_msb = true;
         ymodem.crc = c;
     } else {
 
@@ -265,14 +276,93 @@ static ymodem_status_t await_crc (uint8_t c)
     return status;
 }
 
-// End of transmission handler.
-static ymodem_status_t await_eot (uint8_t c)
+//
+// Packet processing (send)
+//
+
+FLASHMEM static void send_packet (void)
 {
-    if(c == ASCII_EOT)
-        end_transfer(true);
+    uint8_t hdr[3], crc[2];
+    uint16_t crc16 = ccitt_crc16((const uint8_t *)&ymodem.payload, ymodem.packet_len);
+
+    hdr[0] = ymodem.packet_len == 128 ? ASCII_SOH : ASCII_STX;
+    hdr[1] = ymodem.packet_num & 0xFF;
+    hdr[2] = hdr[1] ^ 0xFF;
+    crc[0] = crc16 >> 8;
+    crc[1] = crc16 & 0xFF;
+
+    hal.stream.write_n(hdr, 3);
+    hal.stream.write_n(ymodem.payload, ymodem.packet_len);
+    hal.stream.write_n(crc, 2);
+
+    ymodem.process = await_ack;
+}
+
+FLASHMEM static ymodem_status_t await_eot_ack (uint8_t c)
+{
+    switch(c) {
+
+        case ASCII_ACK:
+            end_transfer(ASCII_NUL);
+            break;
+
+        default:
+            hal.stream.write_char(ASCII_EOT);
+            break;
+    }
 
     return YModem_NOOP;
 }
+
+FLASHMEM static ymodem_status_t await_ack (uint8_t c)
+{
+    switch(c) {
+
+        case ASCII_ACK:
+            if(!ymodem.completed) {
+                ymodem.packet_num++;
+                ymodem.errors = 0;
+                ymodem.packet_len = vfs_read(ymodem.payload, 1024, 1, ymodem.handle);
+                if((ymodem.completed = vfs_eof(ymodem.handle)) && !(ymodem.packet_len == 128 || ymodem.packet_len == 1024))
+                   memset(ymodem.payload + ymodem.packet_len, 0, 1024 - ymodem.packet_len);
+                ymodem.packet_len = ymodem.packet_len < 128 ? 128 : 1024;
+                send_packet();
+            } else {
+                hal.stream.write_char(ASCII_EOT);
+                ymodem.process = await_eot_ack;
+            }
+            break;
+
+        case ASCII_NAK:
+            if(hal.stream.reset_write_buffer)
+                hal.stream.reset_write_buffer();
+            if(++ymodem.errors > 10)
+                end_transfer(ASCII_NUL);
+            else
+                send_packet();
+            break;
+
+        case ASCII_CAN:
+            if(hal.stream.reset_write_buffer)
+                hal.stream.reset_write_buffer();
+            ymodem.process = await_cancel;
+            break;
+    }
+
+    return YModem_NOOP;
+}
+
+FLASHMEM static ymodem_status_t await_start (uint8_t c)
+{
+    if(c == 'C') {
+        ymodem.process = await_ack;
+        send_packet();
+    }
+
+    return YModem_NOOP;
+}
+
+// End of packet processing.
 
 // Main YModem protocol loop.
 // Reads characters off input stream and dispatches them to the appropriate handler.
@@ -287,8 +377,8 @@ static void protocol_loop (sys_state_t state)
 
         ymodem.errors++;
         if(ymodem.errors > 10)
-            end_transfer(false);
-        else {
+            end_transfer(ASCII_NUL);
+        else if(!ymodem.upload) {
             ymodem.process = await_soh;
             hal.stream.write_char(ASCII_NAK);
         }
@@ -313,7 +403,7 @@ static void protocol_loop (sys_state_t state)
 
             case YModem_NoFile:
                 hal.stream.write_char(ASCII_ACK);
-                end_transfer(false);
+                end_transfer(ASCII_NUL);
                 break;
 
             case YModem_NAK:
@@ -324,7 +414,7 @@ static void protocol_loop (sys_state_t state)
             case YModem_CAN:
                 hal.stream.write_char(ASCII_CAN);
                 hal.stream.write_char(ASCII_CAN);
-                end_transfer(false);
+                end_transfer(ASCII_NUL);
                 break;
 
             case YModem_Purge:
@@ -350,45 +440,77 @@ static void on_soft_reset (void)
     if(grbl.on_execute_realtime == protocol_loop) {
         hal.stream.write_char(ASCII_CAN);
         hal.stream.write_char(ASCII_CAN);
-        end_transfer(false);
+        end_transfer(ASCII_NUL);
     }
 
     driver_reset();
 }
 
+FLASHMEM static void redirect (process_data_ptr handler, vfs_file_t *file)
+{
+    rx_buffer.head = rx_buffer.tail = 0;
+    rt_handler = hal.stream.set_enqueue_rt_handler(put_char);   // Buffer stream input for YModem protocol
+
+    on_execute_realtime = grbl.on_execute_realtime;             // Add YModem protocol loop
+    grbl.on_execute_realtime = protocol_loop;                   // to grblHAL foreground process
+
+    memset(&ymodem, 0, sizeof(ymodem));                         // Init YModem variables
+    ymodem.process = handler;
+    ymodem.upload = !!(ymodem.handle = file);
+    ymodem.next_timeout = hal.get_elapsed_ticks() + 1000;
+}
+
 // Check input stream for file YModem start of header (soh) characters.
-// Redirect input stream and start protocol handler when found.
+// Redirect input stream and start download handler when found.
 static bool trap_initial_soh (char c)
 {
     if(c == ASCII_SOH || c == ASCII_STX) {
-
-        rx_buffer.head = rx_buffer.tail = 0;
-        rt_handler = hal.stream.set_enqueue_rt_handler(put_char);   // Buffer stream input for YModem protocol
-
-        on_execute_realtime = grbl.on_execute_realtime;             // Add YModem protocol loop
-        grbl.on_execute_realtime = protocol_loop;                   // to grblHAL foreground process
-
-        memset(&ymodem, 0, sizeof(ymodem));                         // Init YModem variables
-        ymodem.process = await_soh;
-        ymodem.next_timeout = hal.get_elapsed_ticks() + 1000;
-
+        redirect(await_soh, NULL);
         put_char(c);
-
         return true;                                                // Return true to drop character
     }
 
     return on_unknown_realtime_cmd == NULL || on_unknown_realtime_cmd(c);
 }
 
-// Add YModem protocol to chain of unknown real-time command handlers
-void ymodem_init (void)
+FLASHMEM static status_code_t upload (sys_state_t state, char *args)
 {
+    vfs_stat_t st;
+    vfs_file_t *file;
+    status_code_t retval = Status_OK;
+
+    if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
+        retval = Status_SystemGClock;
+    else if(args && vfs_stat(args, &st) == 0 && !st.st_mode.directory && (file = vfs_open(args, "rb"))) {
+        redirect(await_start, file); // Init YModem variables
+        strcpy((char *)ymodem.payload, args);
+        char *len = strcpy(strchr((char *)ymodem.payload, '\0') + 1, uitoa(st.st_size));
+        ymodem.packet_len = len + strlen(len) + 1 - (char *)ymodem.payload > 128 ? 1024 : 128;
+    } else
+        retval = Status_FileOpenFailed;
+
+    return retval;
+}
+
+// Add YModem protocol to chain of unknown real-time command handlers
+FLASHMEM void ymodem_init (void)
+{
+    PROGMEM static const sys_command_t ymodem_command_list[] = {
+        {"YUP", upload, {}, { .str = "$YUP=<filename> - upload file with YMODEM" } },
+    };
+
+    static sys_commands_t ymodem_commands = {
+        .n_commands = sizeof(ymodem_command_list) / sizeof(sys_command_t),
+        .commands = ymodem_command_list
+    };
+
     driver_reset = hal.driver_reset;
     hal.driver_reset = on_soft_reset;
 
     on_unknown_realtime_cmd = grbl.on_unknown_realtime_cmd;
     grbl.on_unknown_realtime_cmd = trap_initial_soh;
+
+    system_register_commands(&ymodem_commands);
 }
 
-#endif
-
+#endif // FS_ENABLE & FS_YMODEM
