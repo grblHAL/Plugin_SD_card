@@ -185,7 +185,7 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
         if(depth == 0 && dirent->st_mode.directory && !dirent->st_mode.hidden && snprintf(buf, BUFLEN, "[FILE:%s%s|SIZE:-1]" ASCII_EOL, path, dirent->name))
             hal.stream.write(buf);
 
-        grbl.on_execute_realtime(state_get());
+        task_execute(false);
     }
 
     int err = vfs_errno;
@@ -221,7 +221,7 @@ static int scan_dir (char *path, uint_fast8_t depth, char *buf, bool filtered)
             path[pathlen] = '\0';
         }
 
-        grbl.on_execute_realtime(state_get());
+        task_execute(false);
     }
 
     if(dir)
@@ -563,6 +563,8 @@ FLASHMEM status_code_t stream_file (sys_state_t state, char *fname)
         retval = Status_FsNotMounted;
     else if(!(state == STATE_IDLE || state == STATE_CHECK_MODE))
         retval = Status_SystemGClock;
+//    else if(file.handle)
+//        retval = nesting not allowed;
     else if(fname && vfs_stat(fname, &st) == 0) {
 
         if(st.st_mode.directory)

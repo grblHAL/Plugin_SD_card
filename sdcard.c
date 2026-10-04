@@ -98,7 +98,7 @@ FLASHMEM static bool sdcard_mount (void)
 
 FLASHMEM static void sdcard_auto_mount (void *data)
 {
-    if(device.fs == NULL && !sdcard_mount())
+    if(settings.fs_options.sd_mount_on_boot && device.fs == NULL && !sdcard_mount())
         report_message("SD card automount failed", Message_Info);
 }
 
@@ -198,7 +198,7 @@ FLASHMEM static bool onDriverSetup (settings_t *settings)
 FLASHMEM void sdcard_early_mount (void)
 {
     if(detect_pin == NULL || detect_pin->get_value(detect_pin) == 0.0f) {
-        if (driver_setup == NULL){ //has not been called
+        if(driver_setup == NULL) { //has not been called
 			driver_setup = hal.driver_setup;
 			hal.driver_setup = onDriverSetup;
 		}
@@ -212,7 +212,7 @@ FLASHMEM static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        report_plugin("SDCARD", "1.28");
+        report_plugin("SDCARD", "1.29");
 }
 
 FLASHMEM sdcard_events_t *sdcard_init (void)
@@ -247,8 +247,7 @@ FLASHMEM sdcard_events_t *sdcard_init (void)
     errors_register(&error_details);
     system_register_commands(&sdcard_commands);
 
-    if(settings.fs_options.sd_mount_on_boot)
-        task_run_on_startup(sdcard_auto_mount, NULL);
+    task_run_on_startup(sdcard_auto_mount, NULL);
 
     return &sdcard;
 }
