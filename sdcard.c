@@ -87,7 +87,7 @@ FLASHMEM static bool sdcard_mount (void)
     if((mount_changed = is_mounted != !!device.fs) && !realtime_report_subscribed) {
         realtime_report_subscribed = true;
         on_realtime_report = grbl.on_realtime_report;
-        grbl.on_realtime_report = onRealtimeReport; // Add mount status changes and job percent complete to real time report
+        grbl.on_realtime_report = onRealtimeReport; // Add mount status changes
     }
 
     if(device.fs != NULL)
@@ -105,6 +105,10 @@ FLASHMEM static void sdcard_auto_mount (void *data)
 static bool sdcard_unmount (void)
 {
     if(device.fs) {
+
+        if(device.fs)
+            vfs_unmount(&device, "/");
+
         if(sdcard.on_unmount)
             mount_changed = sdcard.on_unmount(&device.fs);
 #ifdef NEW_FATFS
@@ -114,10 +118,7 @@ static bool sdcard_unmount (void)
         else
             mount_changed = f_mount(device.id, NULL) == FR_OK;
 #endif
-        if(mount_changed && device.fs) {
-            device.fs = NULL;
-            vfs_unmount(&device, "/");
-        }
+        device.fs = NULL;
     }
 
     return device.fs == NULL;
@@ -212,7 +213,7 @@ FLASHMEM static void onReportOptions (bool newopt)
     if(newopt)
         hal.stream.write(",SD");
     else
-        report_plugin("SDCARD", "1.29");
+        report_plugin("SDCARD", "1.30");
 }
 
 FLASHMEM sdcard_events_t *sdcard_init (void)

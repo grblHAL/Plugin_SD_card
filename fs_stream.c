@@ -700,16 +700,9 @@ FLASHMEM static status_code_t cmd_cwd (sys_state_t state, char *args)
 {
     status_code_t retval = Status_Unhandled;
 
-    if(args) {
-
-        vfs_stat_t st;
-
-        if(vfs_stat(args, &st) == 0 && st.st_mode.directory)
-            retval = vfs_chdir(args) ? Status_FSDirNotFound : Status_OK;
-        else
-            retval = Status_FSDirNotFound;
-    } else {
-
+    if(args)
+        retval = vfs_chdir(args) ? Status_FSDirNotFound : Status_OK;
+    else {
         char *cwd;
 
         if((cwd = vfs_getcwd(NULL, 0))) {
@@ -876,12 +869,17 @@ FLASHMEM static void onReportOptions (bool newopt)
         hal.stream.write(",FS");
 #endif
     } else
-        report_plugin("FS stream", "1.16");
+        report_plugin("FS stream", "1.17");
 }
 
 FLASHMEM static void onFsUnmount (const char *path)
 {
     fs.mounted--;
+
+    if(file.handle && vfs_get_drive(path)->fs == file.handle->fs) {
+        stream_end_job(false);
+        hal.stream.enqueue_rt_command(CMD_STOP);
+    }
 
     if(on_vfs_unmount)
         on_vfs_unmount(path);

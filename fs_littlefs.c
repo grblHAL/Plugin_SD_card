@@ -25,6 +25,7 @@
 
 #include "../grbl/protocol.h"
 #include "../grbl/platform.h"
+#include "../grbl/strutils.h"
 #include "../grbl/vfs.h"
 
 #include <stddef.h>
@@ -53,52 +54,49 @@ static struct lfs_dev {
     lfs_t fs;
     const struct lfs_config *config;
 } lfs_dev = {0};
-static bool is_rootfs;
+static bool is_rootfs, is_hidden = true;
 static char _cwd[51] = "/";
-static vfs_path_t cwd = { .name = _cwd, .len = sizeof(_cwd) - 1 };
+static string_t cwdb = { .name = _cwd, .len = sizeof(_cwd) - 1 }, cwd = { .name = _cwd, .len = sizeof(_cwd) - 1, .base = &cwdb };
+
 static settings_changed_ptr on_settings_changed = NULL;
-static bool is_hidden = true;
 
 FLASHMEM static const char *get_path (const char *path)
 {
-    static vfs_path_t abspath = {0};
+    static string_t abspath = {0};
 
-    if(strlen(cwd.name) + strlen(path) + 1 > abspath.len) {
-        abspath.len = max(50, strlen(cwd.name)) + strlen(path) + 1;
-        abspath.name = realloc(abspath.name, abspath.len);
-    }
+    char *fullpath;
 
-    if(abspath.name) {
+    if((fullpath = strset(&abspath, strlen(cwd.name) + strlen(path) + 1, NULL))) {
 
         char *newpath;
 
         if((newpath = malloc(strlen(path) + 1))) {
 
             strcpy(newpath, path);
-            strcpy(abspath.name, *path == '/' ? "/" : cwd.name);
+            strcpy(fullpath, *path == '/' ? "/" : cwd.name);
 
             char *p, *el = strtok(newpath, "/");
 
             while(el) {
                 if(!strcmp("..", el)) {
-                    if((p = strrchr(abspath.name, '/')))
-                        *(p + (p == abspath.name ? 1 : 0)) = '\0';
+                    if((p = strrchr(fullpath, '/')))
+                        *(p + (p == fullpath ? 1 : 0)) = '\0';
                 } else if(*el && strcmp(el, ".")) {
-                    if(strlen(abspath.name) == 1)
-                        strcat(abspath.name, el);
+                    if(strlen(fullpath) == 1)
+                        strcat(fullpath, el);
                     else
-                        strcat(strcat(abspath.name, "/"), el);
+                        strcat(strcat(fullpath, "/"), el);
                 }
                 el = strtok(NULL, "/");
             }
 
             free(newpath);
         } else
-            strcpy(abspath.name, path);
+            strcpy(fullpath, path);
     } else
         abspath.len = 0;
 
-    return abspath.name ? (const char *)abspath.name : path;
+    return fullpath ? (const char *)fullpath : path;
 }
 
 FLASHMEM static vfs_file_t *fs_open (const char *filename, const char *mode)
@@ -311,20 +309,9 @@ FLASHMEM static int fs_chdir (const char *path)
     vfs_stat_t st;
 
     if((ferrno = fs_stat(*path ? path : "/", &st)) == 0 && st.st_mode.directory) {
-        size_t cwdlen;
-        if((cwdlen = strlen(path)) > cwd.len) {
-            if(cwd.name == _cwd)
-                cwd.name = malloc(cwdlen + 1);
-            else
-                cwd.name = realloc(cwd.name, cwdlen + 1);
-            if(cwd.name)
-                cwd.len = cwdlen;
-            else {
-                cwd.name = _cwd;
-                cwd.len = sizeof(_cwd) - 1;
-                path = "/";
-                ferrno = -1;
-            }
+        if(!strset(&cwd, strlen(path) + 1, NULL)) {
+            path = "/";
+            ferrno = -1;
         }
         strcpy(cwd.name, *path ? path : "/");
     } else
@@ -412,7 +399,7 @@ FLASHMEM static void onSettingsChanged (settings_t *settings, settings_changed_f
     }
 }
 
-FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *config)
+FLASHMEM bool fs_littlefs_mount (const char *path, const struct lfs_config *config)
 {
     PROGMEM static const vfs_t littlefs = {
         .fs_name = "littlefs",
@@ -442,7 +429,7 @@ FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *conf
     };
 
     if((lfs_dev.config = config) == NULL)
-        return;
+        return false;
 
     if(lfs_mount(&lfs_dev.fs, config) != LFS_ERR_OK)
         lfs_format(&lfs_dev.fs, config);
@@ -460,6 +447,8 @@ FLASHMEM void fs_littlefs_mount (const char *path, const struct lfs_config *conf
         }
     } else
         task_run_on_startup(report_warning, "LittleFS mount failed!");
+
+    return hal.driver_cap.littlefs;
 }
 
 #endif // LITTLEFS_ENABLE

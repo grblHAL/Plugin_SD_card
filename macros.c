@@ -43,9 +43,7 @@ typedef struct {
     vfs_file_t *file;
     size_t pos, pos_return;
     line_number_t line_number;
-#if NGC_PARAMETERS_ENABLE
     bool parameter_stack;
-#endif
 } macro_stack_entry_t;
 
 static volatile int_fast16_t stack_idx = -1;
@@ -84,10 +82,9 @@ FLASHMEM static bool end_macro (bool failed)
 #if NGC_EXPRESSIONS_ENABLE
             ngc_flowctrl_unwind_stack(macro[stack_idx].file);
 #endif
-#if NGC_PARAMETERS_ENABLE
             if(macro[stack_idx].parameter_stack)
                 ngc_call_pop();
-#endif
+
             macro[stack_idx].file = NULL;
         }
         stack_idx--;
@@ -156,9 +153,7 @@ FLASHMEM static void stack_push (macro_id_t macro_id, line_number_t line_number,
     stack->file = file;
     stack->pos = pos;
     stack->pos_return = pos_return;
-#if NGC_PARAMETERS_ENABLE
     stack->parameter_stack = pstack;
-#endif
 }
 
 FLASHMEM static status_code_t macro_start (const char *filename, macro_id_t macro_id, uint32_t repeats, bool pstack)

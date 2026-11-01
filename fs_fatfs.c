@@ -413,7 +413,7 @@ FLASHMEM static bool fs_dev_mount (const void *dev, bool mount)
 
 #endif
 
-FLASHMEM void fs_fatfs_mount (const char *path, const fatfs_dev_t *device)
+FLASHMEM bool fs_fatfs_mount (const char *path, const fatfs_dev_t *device)
 {
     PROGMEM static const vfs_t fs = {
         .fs_name = "FatFs",
@@ -459,7 +459,7 @@ FLASHMEM void fs_fatfs_mount (const char *path, const fatfs_dev_t *device)
 #endif
     };
 
-    vfs_mount(device, path, &fs, mode);
+    return vfs_mount(device, path, &fs, mode);
 }
 
 #endif

@@ -37,4 +37,4 @@ typedef struct {
 } fatfs_dev_t;
 #endif
 
-void fs_fatfs_mount (const char *path, const fatfs_dev_t *device);
+bool fs_fatfs_mount (const char *path, const fatfs_dev_t *device);

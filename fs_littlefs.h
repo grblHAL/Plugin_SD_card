@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2022 Terje Io
+  Copyright (c) 2022-2026 Terje Io
 
   grblHAL is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -21,4 +21,4 @@
 
 #pragma once
 
-void fs_littlefs_mount (const char *path, const struct lfs_config *config);
+bool fs_littlefs_mount (const char *path, const struct lfs_config *config);
