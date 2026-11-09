@@ -66,7 +66,7 @@ FLASHMEM static const char *get_path (const char *path)
 
     char *fullpath;
 
-    if((fullpath = strset(&abspath, strlen(cwd.name) + strlen(path) + 1, NULL))) {
+    if((fullpath = strset_(&abspath, strlen(cwd.name) + strlen(path) + 1, NULL))) {
 
         char *newpath;
 
@@ -309,7 +309,7 @@ FLASHMEM static int fs_chdir (const char *path)
     vfs_stat_t st;
 
     if((ferrno = fs_stat(*path ? path : "/", &st)) == 0 && st.st_mode.directory) {
-        if(!strset(&cwd, strlen(path) + 1, NULL)) {
+        if(!strset_(&cwd, strlen(path) + 1, NULL)) {
             path = "/";
             ferrno = -1;
         }
