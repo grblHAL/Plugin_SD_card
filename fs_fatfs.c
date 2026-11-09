@@ -371,7 +371,7 @@ FLASHMEM static int fs_format (void)
 {
     void *work = malloc(FF_MAX_SS);
 
-#if FF_DEFINED >= 86631
+#if FF_DEFINED >= 86631 || FF_DEFINED == 80286 // R0.14b+, R0.15
     FRESULT res = f_mkfs("/", NULL, work, work ? FF_MAX_SS : 0);
 #else
     FRESULT res = f_mkfs("/", FM_ANY, 0, work, work ? FF_MAX_SS : 0);
