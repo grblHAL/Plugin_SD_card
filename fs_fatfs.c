@@ -48,6 +48,18 @@
 
 #include "fs_fatfs.h"
 
+// f_mkfs() takes a MKFS_PARM struct from FatFs R0.14 on. FF_DEFINED holds the
+// revision ID, but the IDs are not ordered (R0.14b = 86631, R0.15 = 80286,
+// R0.15a = 5380), so match the known pre-R0.14 releases and assume the new
+// signature otherwise. Define FATFS_MKFS_PARM as 0 or 1 to override.
+#ifndef FATFS_MKFS_PARM
+#if !defined(FF_DEFINED) || FF_DEFINED == 87030 || FF_DEFINED == 89352 || FF_DEFINED == 63463 || FF_DEFINED == 86604 // R0.12x, R0.13, R0.13a, R0.13b, R0.13c
+#define FATFS_MKFS_PARM 0
+#else
+#define FATFS_MKFS_PARM 1
+#endif
+#endif
+
 #ifndef ESP_PLATFORM
 #define FF_DIR DIR
 #endif
@@ -371,7 +383,7 @@ FLASHMEM static int fs_format (void)
 {
     void *work = malloc(FF_MAX_SS);
 
-#if FF_DEFINED >= 86631
+#if FATFS_MKFS_PARM
     FRESULT res = f_mkfs("/", NULL, work, work ? FF_MAX_SS : 0);
 #else
     FRESULT res = f_mkfs("/", FM_ANY, 0, work, work ? FF_MAX_SS : 0);
